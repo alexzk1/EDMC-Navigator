@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -e
+
+python3 -m py_compile miner_tracker/*.py
+pyflakes miner_tracker/*.py
