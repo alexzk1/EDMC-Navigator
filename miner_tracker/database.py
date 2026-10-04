@@ -32,8 +32,9 @@ class DatabaseManager:
                 )
             """)
 
-    def add_spot(self, spot: SurfaceSpot) -> int | None:
+    def add_spot(self, spot: SurfaceSpot) -> bool:
         try:
+            success: bool = False
             with self._get_connection() as conn:
                 cursor = conn.execute(
                     """
@@ -56,11 +57,15 @@ class DatabaseManager:
                         spot.notes,
                     ),
                 )
+                success = cursor.lastrowid is not None
+
+            # Let the transaction to finish!
+            if success:
                 dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
-                return cursor.lastrowid
+            return success
         except sqlite3.Error as e:
             print(f"Database error during add_spot: {e}")
-            return None
+        return False
 
     @staticmethod
     def _fetch_select_cursor(cursor: sqlite3.Cursor) -> list[SurfaceSpot]:
@@ -117,8 +122,10 @@ class DatabaseManager:
         try:
             with self._get_connection() as conn:
                 conn.execute(sql, values)
-                dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
-                return True
+
+            # Let the transaction to finish!
+            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+            return True
         except sqlite3.Error as e:
             print(f"Database error during update_spot: {e}")
             return False
@@ -127,8 +134,10 @@ class DatabaseManager:
         try:
             with self._get_connection() as conn:
                 conn.execute("DELETE FROM surface_spots WHERE id = ?", (spot_id,))
-                dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
-                return True
+
+            # Let the transaction to finish!
+            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+            return True
         except sqlite3.Error as e:
             print(f"Database error during delete_spot: {e}")
             return False
@@ -171,4 +180,5 @@ class DatabaseManager:
             """,
                 (datetime.datetime.now(), star_system, body_name, lat, lat, lon),
             )
-            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+        # Let the transaction to finish!
+        dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())

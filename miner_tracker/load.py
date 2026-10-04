@@ -65,9 +65,10 @@ class MinerTrackerPlugin:
         self, system: str, entry: Mapping[str, Any], state: MutableMapping[str, Any]
     ) -> bool:
         """Extracts location information from journal entries."""
-        new_body: str = ""
+        dirty_new_body: str = ""
         new_point: SurfacePoint | None = None
         loc_update_in_srv: bool = False
+        had_approach: bool = False
 
         # Keeping as much as possible of existing data until we fly away.
         # Detect the body and/or coordinates in event.
@@ -84,12 +85,16 @@ class MinerTrackerPlugin:
                 self._overlay.navigate_to(None)
                 return True
             case "ApproachBody" | "Touchdown" | "Liftoff" | "Embark" | "Disembark":
-                new_body = entry.get("Body") or ""
+                dirty_new_body = entry.get("Body") or ""
+                had_approach = True
+            case "ApproachSettlement":
+                dirty_new_body = entry.get("BodyName") or ""
+                had_approach = True
             case _:
                 pass
 
         # We need to have location recorded or new body provided to create the record or both to update.
-        if not new_body and not self.current_location:
+        if not dirty_new_body and not self.current_location:
             return False
 
         old_location = (
@@ -98,6 +103,7 @@ class MinerTrackerPlugin:
             else PlayerLocation(star_system=system)
         )
         old_body = old_location.body_name
+        new_body = self._clean_body_name(system, dirty_new_body)
 
         def refresh_srv_location() -> bool:
             # If record is related to the taxi / station -> do nothing....we could call taxi and left SRV,
@@ -145,9 +151,7 @@ class MinerTrackerPlugin:
 
         flew_to_other_body: bool = bool(new_body and (new_body != old_body))
         if flew_to_other_body or not self.current_location:
-            final_body_name = self._clean_body_name(
-                system, new_body or str(old_body or "")
-            )
+            final_body_name = new_body or str(old_body or "")
             self.current_location = PlayerLocation(
                 star_system=system,
                 body_name=final_body_name,
@@ -160,7 +164,7 @@ class MinerTrackerPlugin:
         has_new_point: bool = new_point is not None
         if has_new_point:
             self.current_location.player_coord = new_point
-        return has_new_point or refresh_srv_location()
+        return had_approach or has_new_point or refresh_srv_location()
 
     def handle_dashboard_update(self, cmdr: str, is_beta: bool, entry: dict[str, Any]):
         """Called by EDMC when a Status update occurs (Dashboard)."""
@@ -182,21 +186,19 @@ class MinerTrackerPlugin:
         if not status_body:
             return False
 
+        flags = StatusFlags(entry.get("Flags", 0))
+        had_changes = (
+            self.current_location.is_boarded_srv != StatusFlags.IN_SRV in flags
+            or StatusFlags.FSD_JUMP_IN_PROGRESS in flags
+        )
+
         # If we got different body - reset everything, status updates more often.
         if status_body != self.current_location.body_name:
             self.current_location = PlayerLocation(
                 star_system=self.current_location.star_system, body_name=status_body
             )
+            had_changes = True
 
-        flags = StatusFlags(entry.get("Flags", 0))
-        if StatusFlags.FSD_JUMP_IN_PROGRESS in flags:
-            # Jump animation started? We're not there for sure now.
-            self.current_location = None
-            return True
-
-        had_changes = (
-            self.current_location.is_boarded_srv != StatusFlags.IN_SRV in flags
-        )
         self.current_location.is_boarded_srv = StatusFlags.IN_SRV in flags
 
         # Do we have lat/lon at all ?

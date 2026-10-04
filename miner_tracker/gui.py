@@ -17,9 +17,16 @@ class AddSpotDialog(tk.Toplevel):
         current_location: PlayerLocation | None = None,
     ):
         super().__init__(parent)
-        self.title("Add [Mining] Spot")
-        self.geometry("300x450")
+        self.title("Add Spot...")
         self.db_manager = db_manager
+
+        window_width = 380
+        window_height = 500
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        self.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
         container = ttk.Frame(self, padding="15")
         container.pack(fill=tk.BOTH, expand=True)
@@ -100,7 +107,7 @@ class AddSpotDialog(tk.Toplevel):
                 longitude=lon,
                 mineral_type=empty_str_as_none("mineral"),
                 spot_number=int(spot_num) if spot_num else None,
-                notes=empty_str_as_none("notes"),
+                notes=empty_str_as_none("note"),
             )
             if spot.star_system and spot.body_name:
                 if self.db_manager.add_spot(spot):
@@ -118,6 +125,7 @@ class MinerTrackerGUI(ttk.Frame):
         self, parent: tk.Tk, db_manager: DatabaseManager, overlay_client: OverlayClient
     ):
         super().__init__(parent)
+        self.last_known_full_body = ""
         self.db_manager = db_manager
         self.overlay = overlay_client
         self.current_location: PlayerLocation | None = None
@@ -240,3 +248,13 @@ class MinerTrackerGUI(ttk.Frame):
     def _set_current_location(self, data: EventParams):
         """Update the GUI's knowledge of where we are and whether we are on surface."""
         self.current_location = data.location
+        body = ""
+        if self.current_location is not None:
+            body = (
+                self.current_location.star_system
+                + " "
+                + self.current_location.body_name
+            )
+        if body != self.last_known_full_body:
+            self.last_known_full_body = body
+            self._refresh()

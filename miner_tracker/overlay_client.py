@@ -19,9 +19,9 @@ logger = logging.getLogger("SurfaceNavigator")
 @dataclass(slots=True)
 class OverlayTextConf:
     left: int = 10
-    top: int = 250
-    color: str = "#F013C8C8"
-    color_reached: str = "#E4173DC7"
+    top: int = 320
+    color: str = "#62FF00"
+    color_reached: str = "#FF0000"
     size: str = "normal"
 
 
