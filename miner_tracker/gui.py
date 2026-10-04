@@ -106,6 +106,7 @@ class MinerTrackerGUI(ttk.Frame):
         dispatcher.subscribe(
             KnownEvents.DATA_BASE_MODIFIED, lambda data: self._refresh()
         )
+        dispatcher.subscribe(KnownEvents.POSITION_UPDATED, self._set_current_location)
 
     def _setup_ui(self):
         main_container = ttk.Frame(self, padding="10")
@@ -204,13 +205,12 @@ class MinerTrackerGUI(ttk.Frame):
             current_location=self.current_location,
         )
 
-    def set_current_location(self, location: PlayerLocation | None):
+    def _set_current_location(self, data: EventParams):
         """Update the GUI's knowledge of where we are and whether we are on surface."""
-        self.current_location = location
+        self.current_location = data.location
         self.has_coords = (
-            location is not None
-            and location.latitude is not None
-            and location.longitude is not None
+            self.current_location is not None
+            and self.current_location.player_coord is not None
         )
         if self.has_coords:
             self._btn_add.config(state="normal")
