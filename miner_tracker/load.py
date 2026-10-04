@@ -7,7 +7,7 @@ from typing import Any
 try:
     from .database import DatabaseManager
     from .gui import MinerTrackerGUI
-    from .mining_event_detector import MiningEventDetector
+    from .mining_event_detector import RhinoMiningEventDetector
     from .overlay_client import OverlayClient
     from .player_location import PlayerLocation
     from .status_flags import StatusFlags
@@ -20,7 +20,7 @@ except ImportError:
 
     from database import DatabaseManager
     from gui import MinerTrackerGUI
-    from mining_event_detector import MiningEventDetector
+    from mining_event_detector import RhinoMiningEventDetector
     from overlay_client import OverlayClient
     from player_location import PlayerLocation
     from status_flags import StatusFlags
@@ -33,7 +33,7 @@ class MinerTrackerPlugin:
         db_path = os.path.join(plugin_dir, "miner_tracker.db")
         self.db_manager = DatabaseManager(db_path)
         self.overlay = OverlayClient("MinerTracker")
-        self.mining_detector = MiningEventDetector(self.db_manager)
+        self.mining_detector = RhinoMiningEventDetector()
         self._gui: MinerTrackerGUI | None = None
 
         # Current game state tracking
