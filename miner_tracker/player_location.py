@@ -11,3 +11,8 @@ class PlayerLocation:
     longitude: float | None = None
     radius: float | None = None
     heading: float | None = None
+
+    def is_valid_surface_location(self):
+        return (
+            self.body_name and self.latitude is not None and self.longitude is not None
+        )

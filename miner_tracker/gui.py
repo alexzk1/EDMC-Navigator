@@ -1,18 +1,12 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import Any, Protocol
+from typing import Any
 
 from .database import DatabaseManager
-from .events_dispatcher import dispatcher
+from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import MiningSpot
 from .overlay_client import OverlayClient
 from .player_location import PlayerLocation
-
-
-class OnDbUpdated(Protocol):
-    """Callback that data base was modified."""
-
-    def __call__(self) -> None: ...
 
 
 class AddSpotDialog(tk.Toplevel):
@@ -20,14 +14,12 @@ class AddSpotDialog(tk.Toplevel):
         self,
         parent: tk.Tk,
         db_manager: DatabaseManager,
-        callback: OnDbUpdated,
         current_location: PlayerLocation | None = None,
     ):
         super().__init__(parent)
         self.title("Add [Mining] Spot")
         self.geometry("300x450")
         self.db_manager = db_manager
-        self.callback = callback
 
         container = ttk.Frame(self, padding="15")
         container.pack(fill=tk.BOTH, expand=True)
@@ -86,12 +78,7 @@ class AddSpotDialog(tk.Toplevel):
             )
             if spot.star_system and spot.body_name:
                 if self.db_manager.add_spot(spot):
-                    try:
-                        self.callback()
-                    except Exception as e:
-                        messagebox.showerror("Error", f"Failed: '{e}'")
-                    finally:
-                        self.destroy()
+                    self.destroy()
                 else:
                     messagebox.showerror("Error", "Failed to save to database.")
             else:
@@ -102,7 +89,7 @@ class AddSpotDialog(tk.Toplevel):
 
 class MinerTrackerGUI(ttk.Frame):
     def __init__(
-        self, parent, db_manager: DatabaseManager, overlay_client: OverlayClient
+        self, parent: tk.Tk, db_manager: DatabaseManager, overlay_client: OverlayClient
     ):
         super().__init__(parent)
         self.db_manager = db_manager
@@ -113,9 +100,12 @@ class MinerTrackerGUI(ttk.Frame):
         self._setup_ui()
         self._load_data()
 
-        dispatcher.subscribe("mining_record_detected", self._on_mining_record_found)
-        # FIXME
-        # dispatcher.subscribe("spot_added", lambda _: self._refresh())
+        dispatcher.subscribe(
+            KnownEvents.RHINO_MINING_DETECTED, self._on_mining_record_found
+        )
+        dispatcher.subscribe(
+            KnownEvents.DATA_BASE_MODIFIED, lambda data: self._refresh()
+        )
 
     def _setup_ui(self):
         main_container = ttk.Frame(self, padding="10")
@@ -151,7 +141,9 @@ class MinerTrackerGUI(ttk.Frame):
             self._tree.column(col, width=70 if col not in ["system", "body"] else 120)
 
         scrollbar = ttk.Scrollbar(
-            tree_container, orient="vertical", command=self._tree.yview
+            tree_container,
+            orient="vertical",
+            command=self._tree.yview,  # type: ignore
         )
         self._tree.configure(yscrollcommand=scrollbar.set)
 
@@ -175,7 +167,7 @@ class MinerTrackerGUI(ttk.Frame):
                 ),
             )
 
-    def _on_navigate(self, event=None):
+    def _on_navigate(self) -> None:
         selection = self._tree.selection()
         if not selection:
             messagebox.showwarning("Warning", "Please select a spot first.")
@@ -186,10 +178,16 @@ class MinerTrackerGUI(ttk.Frame):
             "nav_info", f"Navigating to {vals[2]} in {vals[0]}", color="green"
         )
 
-    def _on_mining_record_found(self, data: dict):
-        self._refresh()
+    def _on_mining_record_found(self, data: EventParams):
+        # TODO: Implement logic: if latest mark is in close radius to latest known position and it has missing fields,
+        # then update it DB record by those mining data. Note, it should be somehow cached to avoid repeated checks,
+        # as mining signal is expected to repeated often while user keeps doing it.
+        # Another note, probably logic must be in DB handler.
+        # self._refresh()
+        pass
 
     def _refresh(self):
+        # FIXME: Need smart refresh! We cannot load thousands of the records each time!
         self._load_data()
 
     def _open_add_dialog(self):
@@ -201,9 +199,8 @@ class MinerTrackerGUI(ttk.Frame):
 
         parent: Any = self.winfo_toplevel()
         AddSpotDialog(
-            parent,
-            self.db_manager,
-            self._refresh,
+            parent=parent,
+            db_manager=self.db_manager,
             current_location=self.current_location,
         )
 

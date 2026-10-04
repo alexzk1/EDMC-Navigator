@@ -1,6 +1,19 @@
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
-EventParams: TypeAlias = dict[str, Any]
+from .player_location import PlayerLocation
+
+
+class EventParams:
+    """Dispatch event, it may have valid self.params, valid self.location or any of them or none of them.
+    Context of the self.params is defined by issuer."""
+
+    def __init__(
+        self,
+        params: dict[str, Any] | None = None,
+        location: PlayerLocation | None = None,
+    ):
+        self.params: dict[str, Any] = params or {}
+        self.location = location
 
 
 @runtime_checkable
@@ -36,3 +49,10 @@ class EventDispatcher:
 
 # Global instance for the plugin to use
 dispatcher = EventDispatcher()
+
+
+class KnownEvents:
+    RHINO_MINING_DETECTED: str = "mining_record_detected"
+    DATA_BASE_MODIFIED: str = "data_base_modified"
+    # Provides valid location field.
+    POSITION_UPDATED: str = "position_updated"

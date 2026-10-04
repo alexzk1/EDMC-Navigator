@@ -1,5 +1,6 @@
 import sqlite3
 
+from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import MiningSpot
 
 
@@ -52,6 +53,7 @@ class DatabaseManager:
                         spot.last_visit_time,
                     ),
                 )
+                dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
                 return cursor.lastrowid
         except sqlite3.Error as e:
             print(f"Database error during add_spot: {e}")
@@ -92,6 +94,7 @@ class DatabaseManager:
         try:
             with self._get_connection() as conn:
                 conn.execute(sql, values)
+                dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
                 return True
         except sqlite3.Error as e:
             print(f"Database error during update_spot: {e}")
@@ -101,6 +104,7 @@ class DatabaseManager:
         try:
             with self._get_connection() as conn:
                 conn.execute("DELETE FROM mining_spots WHERE id = ?", (spot_id,))
+                dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
                 return True
         except sqlite3.Error as e:
             print(f"Database error during delete_spot: {e}")
@@ -144,3 +148,4 @@ class DatabaseManager:
             """,
                 (datetime.datetime.now(), star_system, body_name, lat, lat, lon),
             )
+            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())

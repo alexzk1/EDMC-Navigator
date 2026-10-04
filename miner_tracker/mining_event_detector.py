@@ -3,7 +3,7 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 from .database import DatabaseManager
-from .events_dispatcher import dispatcher
+from .events_dispatcher import EventParams, KnownEvents, dispatcher
 
 logger = logging.getLogger("MinerTracker")
 
@@ -38,8 +38,13 @@ class MiningEventDetector:
 
     def _process_mining_record(self, system: str, entry: dict[str, Any]):
         """Processes a mining record and triggers notification."""
+
+        # FIXME: it is invalid parsing here.
         mineral = entry.get("Type", "Unknown Mineral")
         logger.info(f"MinerTracker: Processing {mineral} in {system}")
 
         # Dispatch event so the UI can refresh or show overlay messages
-        dispatcher.dispatch("mining_record_detected", {"mineral": mineral})
+        dispatcher.dispatch(
+            KnownEvents.RHINO_MINING_DETECTED,
+            EventParams(params={"mineral": mineral}),
+        )
