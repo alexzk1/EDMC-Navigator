@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import Any, Optional
+from typing import Any, Protocol
 
 from .database import DatabaseManager
 from .events_dispatcher import dispatcher
@@ -9,16 +9,22 @@ from .overlay_client import OverlayClient
 from .player_location import PlayerLocation
 
 
+class OnDbUpdated(Protocol):
+    """Callback that data base was modified."""
+
+    def __call__(self) -> None: ...
+
+
 class AddSpotDialog(tk.Toplevel):
     def __init__(
         self,
         parent: tk.Tk,
         db_manager: DatabaseManager,
-        callback,
+        callback: OnDbUpdated,
         current_location: PlayerLocation | None = None,
     ):
         super().__init__(parent)
-        self.title("Add Mining Spot")
+        self.title("Add [Mining] Spot")
         self.geometry("300x450")
         self.db_manager = db_manager
         self.callback = callback
@@ -36,7 +42,7 @@ class AddSpotDialog(tk.Toplevel):
             ("Spot #:", "spot"),
         ]
 
-        self.entries = {}
+        self.entries: dict[str, Any] = {}
         for label_text, key in fields:
             ttk.Label(container, text=label_text).pack(anchor=tk.W)
             entry = ttk.Entry(container)
@@ -108,7 +114,8 @@ class MinerTrackerGUI(ttk.Frame):
         self._load_data()
 
         dispatcher.subscribe("mining_record_detected", self._on_mining_record_found)
-        dispatcher.subscribe("spot_added", lambda _: self._refresh())
+        # FIXME
+        # dispatcher.subscribe("spot_added", lambda _: self._refresh())
 
     def _setup_ui(self):
         main_container = ttk.Frame(self, padding="10")
@@ -192,7 +199,7 @@ class MinerTrackerGUI(ttk.Frame):
             )
             return
 
-        parent = self.winfo_toplevel()
+        parent: Any = self.winfo_toplevel()
         AddSpotDialog(
             parent,
             self.db_manager,
