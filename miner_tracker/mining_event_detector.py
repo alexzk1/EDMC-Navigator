@@ -4,7 +4,7 @@ from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 
-logger = logging.getLogger("MinerTracker")
+logger = logging.getLogger("SurfaceNavigator")
 
 
 class RhinoMiningEventDetector:

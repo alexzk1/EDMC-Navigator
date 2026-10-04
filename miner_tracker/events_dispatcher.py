@@ -42,7 +42,7 @@ class EventDispatcher:
                 except Exception as e:  # noqa: BLE001
                     import logging
 
-                    logging.getLogger("MinerTracker").error(
+                    logging.getLogger("SurfaceNavigator").error(
                         f"Error dispatching {event_type}: {e}"
                     )
 

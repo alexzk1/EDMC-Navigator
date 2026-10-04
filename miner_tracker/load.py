@@ -9,7 +9,7 @@ try:
     from .events_dispatcher import EventParams, KnownEvents, dispatcher
     from .gui import MinerTrackerGUI
     from .mining_event_detector import RhinoMiningEventDetector
-    from .overlay_client import OverlayClient
+    from .overlay_client import OverlayClient, OverlayTextConf
     from .player_location import PlayerLocation, SurfacePoint
     from .status_flags import StatusFlags
 except ImportError:
@@ -23,19 +23,21 @@ except ImportError:
     from events_dispatcher import EventParams, KnownEvents, dispatcher
     from gui import MinerTrackerGUI
     from mining_event_detector import RhinoMiningEventDetector
-    from overlay_client import OverlayClient
+    from overlay_client import OverlayClient, OverlayTextConf
     from player_location import PlayerLocation, SurfacePoint
     from status_flags import StatusFlags
 
-logger = logging.getLogger("MinerTracker")
+logger = logging.getLogger("SurfaceNavigator")
 
 
 class MinerTrackerPlugin:
     def __init__(self, plugin_dir: str):
         db_path = os.path.join(plugin_dir, "miner_tracker.db")
         self.db_manager = DatabaseManager(db_path)
-        self.overlay = OverlayClient("MinerTracker")
-        self.mining_detector = RhinoMiningEventDetector()
+
+        # TODO: add settings to configure overlay position
+        self._overlay = OverlayClient(OverlayTextConf())
+        self._mining_detector = RhinoMiningEventDetector()
         self._gui: MinerTrackerGUI | None = None
 
         # Current game state tracking
@@ -55,7 +57,7 @@ class MinerTrackerPlugin:
 
         if self._extract_location_from_journal(system, entry, state):
             self._emit_location()
-        self.mining_detector.handle_journal_entry(
+        self._mining_detector.handle_journal_entry(
             cmdr, is_beta, system, station, entry, state
         )
 
@@ -78,6 +80,8 @@ class MinerTrackerPlugin:
                     )
             case "FSDJump" | "LeaveBody" | "Resurrect":
                 self.current_location = None
+                # Reset any stored navigation in overlay, we're out...
+                self._overlay.navigate_to(None)
                 return True
             case "ApproachBody" | "Touchdown" | "Liftoff" | "Embark" | "Disembark":
                 new_body = entry.get("Body") or ""
@@ -229,7 +233,7 @@ class MinerTrackerPlugin:
 
     def create_gui(self, parent: Any) -> MinerTrackerGUI | None:
         if self._gui is None:
-            self._gui = MinerTrackerGUI(parent, self.db_manager, self.overlay)
+            self._gui = MinerTrackerGUI(parent, self.db_manager, self._overlay)
             self._gui.current_location = self.current_location
             self._gui.has_coords = self.is_on_surface
         return self._gui
