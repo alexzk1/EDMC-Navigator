@@ -26,12 +26,13 @@ class AddSpotDialog(tk.Toplevel):
 
         # Form Fields
         fields = [
+            ("Note", "note"),
+            ("Mining Spot #:", "spot"),
+            ("Mineral Type:", "mineral"),
             ("Star System:", "system"),
             ("Body Name:", "body"),
-            ("Mineral Type:", "mineral"),
             ("Latitude:", "lat"),
             ("Longitude:", "lon"),
-            ("Spot #:", "spot"),
         ]
 
         self.entries: dict[str, Any] = {}
@@ -49,32 +50,57 @@ class AddSpotDialog(tk.Toplevel):
             if current_location.body_name:
                 self.entries["body"].insert(0, str(current_location.body_name))
                 self.entries["body"].config(state="disabled")
-            if current_location.latitude is not None:
-                self.entries["lat"].insert(0, str(current_location.latitude))
+            if current_location.player_coord is not None:
+                self.entries["lat"].insert(
+                    0, str(current_location.player_coord.latitude)
+                )
+                self.entries["lon"].insert(
+                    0, str(current_location.player_coord.longitude)
+                )
                 self.entries["lat"].config(state="disabled")
-            if current_location.longitude is not None:
-                self.entries["lon"].insert(0, str(current_location.longitude))
                 self.entries["lon"].config(state="disabled")
 
-        ttk.Button(container, text="Save Spot", command=self._save).pack(
-            pady=20, fill=tk.X
+        button_frame = ttk.Frame(container)
+        button_frame.pack(fill=tk.X, pady=(15, 0))
+        save_btn = ttk.Button(button_frame, text="Save", command=self._save)
+        save_btn.pack(side=tk.LEFT, expand=True, padx=2)
+        cancel_btn = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        cancel_btn.pack(side=tk.LEFT, expand=True, padx=2)
+        unlock_btn = ttk.Button(
+            button_frame, text="Unlock Inputs", command=self._unlock_inputs
         )
+        unlock_btn.pack(side=tk.RIGHT, expand=True, padx=2)
+
+    def _unlock_inputs(self):
+        for key in ["lat", "lon", "body", "system"]:
+            self.entries[key].config(state="normal")
 
     def _save(self):
-        try:
-            # Handle empty spot number string
-            spot_num = self.entries["spot"].get().strip()
-            spot_num_val = int(spot_num) if spot_num else None
+        def empty_str_as_none(entry: str) -> str | None:
+            val = self.entries[entry].get().strip()
+            if not val:
+                val = None
+            return val
 
+        try:
+            try:
+                lat = float(self.entries["lat"].get())
+                lon = float(self.entries["lon"].get())
+            except ValueError:
+                raise ValueError("Latitude and Longitude must be valid numbers.")
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                raise ValueError("Coordinates out of range (-90 to 90, -180 to 180).")
+
+            # Handle empty spot number string
+            spot_num = empty_str_as_none("spot")
             spot = SurfaceSpot(
                 star_system=self.entries["system"].get(),
                 body_name=self.entries["body"].get(),
-                latitude=float(self.entries["lat"].get()),
-                longitude=float(self.entries["lon"].get()),
-                mineral_type=self.entries["mineral"].get()
-                if self.entries["mineral"].get()
-                else None,
-                spot_number=spot_num_val,
+                latitude=lat,
+                longitude=lon,
+                mineral_type=empty_str_as_none("mineral"),
+                spot_number=int(spot_num) if spot_num else None,
+                notes=empty_str_as_none("notes"),
             )
             if spot.star_system and spot.body_name:
                 if self.db_manager.add_spot(spot):
@@ -95,7 +121,6 @@ class MinerTrackerGUI(ttk.Frame):
         self.db_manager = db_manager
         self.overlay = overlay_client
         self.current_location: PlayerLocation | None = None
-        self.has_coords: bool = False
 
         self._setup_ui()
         self._load_data()
@@ -154,8 +179,6 @@ class MinerTrackerGUI(ttk.Frame):
 
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        # Initial button state
-        self._btn_add.config(state="disabled")
 
     def _load_data(self):
         for item in self._tree.get_children():
@@ -207,12 +230,6 @@ class MinerTrackerGUI(ttk.Frame):
         self._load_data()
 
     def _open_add_dialog(self):
-        if not self.has_coords:
-            messagebox.showwarning(
-                "Location Error", "You must be on a planet surface to add a spot."
-            )
-            return
-
         parent: Any = self.winfo_toplevel()
         AddSpotDialog(
             parent=parent,
@@ -223,11 +240,3 @@ class MinerTrackerGUI(ttk.Frame):
     def _set_current_location(self, data: EventParams):
         """Update the GUI's knowledge of where we are and whether we are on surface."""
         self.current_location = data.location
-        self.has_coords = (
-            self.current_location is not None
-            and self.current_location.player_coord is not None
-        )
-        if self.has_coords:
-            self._btn_add.config(state="normal")
-        else:
-            self._btn_add.config(state="disabled")
