@@ -162,6 +162,9 @@ class OverlayClient:
             self._config.size,
         )
 
+    def is_navigating(self):
+        return self._destination is not None and self.is_available()
+
     def navigate_to(self, point: SurfacePoint | None):
         self._destination = None
         if point is None or not self.is_available():

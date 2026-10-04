@@ -6,7 +6,7 @@ from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import SurfaceSpot
 from .overlay_client import OverlayClient
-from .player_location import PlayerLocation
+from .player_location import PlayerLocation, SurfacePoint
 
 
 class AddSpotDialog(tk.Toplevel):
@@ -133,13 +133,17 @@ class MinerTrackerGUI(ttk.Frame):
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("system", "body", "mineral", "spot")
+        columns = ("note", "mineral", "spot", "lat", "lon", "db_id")
         self._tree = ttk.Treeview(
             tree_container, columns=columns, show="headings", height=8
         )
         for col in columns:
-            self._tree.heading(col, text=col.capitalize())
-            self._tree.column(col, width=70 if col not in ["system", "body"] else 120)
+            if col in ["lat", "lon", "db_id"]:
+                self._tree.column(col, width=0, stretch=False)
+                self._tree.heading(col, text="")
+            else:
+                self._tree.column(col, width=120 if col in ["note"] else 70)
+                self._tree.heading(col, text=col.capitalize())
 
         scrollbar = ttk.Scrollbar(
             tree_container,
@@ -161,23 +165,35 @@ class MinerTrackerGUI(ttk.Frame):
                 "",
                 tk.END,
                 values=(
-                    spot.star_system,
-                    spot.body_name,
-                    spot.mineral_type or "Unknown",
-                    spot.spot_number,
+                    spot.notes or "Unnamed Mark",
+                    spot.mineral_type or "-",
+                    spot.spot_number or "-",
+                    spot.latitude,
+                    spot.longitude,
+                    spot.id,
                 ),
             )
 
     def _on_navigate(self) -> None:
         selection = self._tree.selection()
         if not selection:
-            messagebox.showwarning("Warning", "Please select a spot first.")
+            if self.overlay.is_navigating():
+                # Cancel navigation (is it possible to reset selection though?)
+                self.overlay.navigate_to(None)
+            else:
+                messagebox.showwarning("Warning", "Please select a spot first.")
             return
         vals = self._tree.item(selection[0], "values")
-        # vals is (system, body, mineral, spot)
-        self.overlay.send_text_message(
-            "nav_info", f"Navigating to {vals[2]} in {vals[0]}", color="green"
-        )
+        try:
+            lat = float(vals[3])
+            lon = float(vals[4])
+            self.overlay.navigate_to(SurfacePoint(lat, lon))
+            if not self.overlay.is_navigating():
+                raise RuntimeError(
+                    "Navigation was not started. Most likely overlay is not installed."
+                )
+        except (ValueError, IndexError, RuntimeError) as e:
+            messagebox.showwarning("Navigation error", f"{e}")
 
     def _on_mining_record_found(self, data: EventParams):
         # TODO: Implement logic: if latest mark is in close radius to latest known position and it has missing fields,
