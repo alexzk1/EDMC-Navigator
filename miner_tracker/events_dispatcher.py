@@ -1,8 +1,10 @@
-from typing import Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
+
 
 class EventDispatcher:
     def __init__(self):
-        self._listeners: Dict[str, List[Callable]] = {}
+        self._listeners: dict[str, list[Callable]] = {}
 
     def subscribe(self, event_type: str, callback: Callable):
         if event_type not in self._listeners:
@@ -16,7 +18,11 @@ class EventDispatcher:
                     callback(*args, **kwargs)
                 except Exception as e:
                     import logging
-                    logging.getLogger("MinerTracker").error(f"Error dispatching {event_type}: {e}")
+
+                    logging.getLogger("MinerTracker").error(
+                        f"Error dispatching {event_type}: {e}"
+                    )
+
 
 # Global instance for the plugin to use
 dispatcher = EventDispatcher()

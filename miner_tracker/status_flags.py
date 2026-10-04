@@ -29,7 +29,7 @@ class StatusFlags(Flag):
     FSD_COOLDOWN = auto()
     LOW_FUEL = auto()
     OVERHEAT = auto()
-    HAVE_LATLONG = auto()
+    HAS_LATLONG = auto()
     DANGER = auto()
     INTERDICTED = auto()
     IN_SHIP = auto()
