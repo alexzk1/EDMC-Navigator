@@ -4,7 +4,7 @@ from typing import Any
 
 from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .models import MiningSpot
+from .models import SurfaceSpot
 from .overlay_client import OverlayClient
 from .player_location import PlayerLocation
 
@@ -66,7 +66,7 @@ class AddSpotDialog(tk.Toplevel):
             spot_num = self.entries["spot"].get().strip()
             spot_num_val = int(spot_num) if spot_num else None
 
-            spot = MiningSpot(
+            spot = SurfaceSpot(
                 star_system=self.entries["system"].get(),
                 body_name=self.entries["body"].get(),
                 latitude=float(self.entries["lat"].get()),
@@ -113,7 +113,7 @@ class MinerTrackerGUI(ttk.Frame):
         main_container.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(
-            main_container, text="Mining Spots Tracker", font=("Helvetica", 12, "bold")
+            main_container, text="Surface Spots", font=("Helvetica", 12, "bold")
         ).pack()
 
         # Toolbar (Horizontal layout for buttons)
@@ -121,11 +121,11 @@ class MinerTrackerGUI(ttk.Frame):
         toolbar.pack(fill=tk.X, pady=(5, 5))
 
         self._btn_add = ttk.Button(
-            toolbar, text="Add New Spot", command=self._open_add_dialog
+            toolbar, text="Record Spot", command=self._open_add_dialog
         )
         self._btn_add.pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(toolbar, text="Navigate", command=self._on_navigate).pack(
+        ttk.Button(toolbar, text="Navigate To", command=self._on_navigate).pack(
             side=tk.RIGHT, padx=2
         )
 
@@ -156,7 +156,7 @@ class MinerTrackerGUI(ttk.Frame):
     def _load_data(self):
         for item in self._tree.get_children():
             self._tree.delete(item)
-        for spot in self.db_manager.get_all_spots():
+        for spot in self.db_manager.get_planetary_spots(self.current_location):
             self._tree.insert(
                 "",
                 tk.END,
@@ -188,7 +188,6 @@ class MinerTrackerGUI(ttk.Frame):
         pass
 
     def _refresh(self):
-        # FIXME: Need smart refresh! We cannot load thousands of the records each time!
         self._load_data()
 
     def _open_add_dialog(self):

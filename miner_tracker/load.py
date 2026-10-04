@@ -32,7 +32,7 @@ logger = logging.getLogger("SurfaceNavigator")
 
 class MinerTrackerPlugin:
     def __init__(self, plugin_dir: str):
-        db_path = os.path.join(plugin_dir, "miner_tracker.db")
+        db_path = os.path.join(plugin_dir, "surface_spots_tracker.db")
         self.db_manager = DatabaseManager(db_path)
 
         # TODO: add settings to configure overlay position

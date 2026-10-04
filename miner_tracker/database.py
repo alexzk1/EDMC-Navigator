@@ -1,7 +1,8 @@
 import sqlite3
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .models import MiningSpot
+from .models import SurfaceSpot
+from .player_location import PlayerLocation
 
 
 class DatabaseManager:
@@ -15,7 +16,7 @@ class DatabaseManager:
     def _init_db(self):
         with self._get_connection() as conn:
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS mining_spots (
+                CREATE TABLE IF NOT EXISTS surface_spots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     star_system TEXT NOT NULL,
                     body_name TEXT NOT NULL,
@@ -26,19 +27,20 @@ class DatabaseManager:
                     amount REAL,
                     density REAL,
                     max_miners INTEGER DEFAULT 1,
-                    last_visit_time TIMESTAMP
+                    last_visit_time TIMESTAMP,
+                    notes TEXT
                 )
             """)
 
-    def add_spot(self, spot: MiningSpot) -> int | None:
+    def add_spot(self, spot: SurfaceSpot) -> int | None:
         try:
             with self._get_connection() as conn:
                 cursor = conn.execute(
                     """
-                    INSERT INTO mining_spots (
+                    INSERT INTO surface_spots (
                         star_system, body_name, latitude, longitude, 
-                        spot_number, mineral_type, amount, density, max_miners, last_visit_time
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        spot_number, mineral_type, amount, density, max_miners, last_visit_time, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         spot.star_system,
@@ -51,6 +53,7 @@ class DatabaseManager:
                         spot.density,
                         spot.max_miners,
                         spot.last_visit_time,
+                        spot.notes,
                     ),
                 )
                 dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
@@ -59,36 +62,56 @@ class DatabaseManager:
             print(f"Database error during add_spot: {e}")
             return None
 
-    def get_all_spots(self) -> list[MiningSpot]:
-        spots = []
+    @staticmethod
+    def _fetch_select_cursor(cursor: sqlite3.Cursor) -> list[SurfaceSpot]:
+        """Does actual fetch from the cursor and validates datetime."""
+        spots: list[SurfaceSpot] = []
+        for row in cursor:
+            data = dict(row)
+            # SQLite might return timestamp as string or datetime depending on driver/version
+            if data["last_visit_time"] and not (
+                data["last_visit_time"] is None
+            ):  # Simple check
+                import datetime
+
+                try:
+                    # If it is a string, convert it.
+                    if isinstance(data["last_visit_time"], str):
+                        data["last_visit_time"] = datetime.datetime.fromisoformat(
+                            data["last_visit_time"]
+                        )
+                except (ValueError, TypeError):
+                    pass
+            spots.append(SurfaceSpot(**data))
+        return spots
+
+    def get_all_spots(self) -> list[SurfaceSpot]:
+        """Fetches ALL records from DB. Warning! It can explode things."""
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM mining_spots")
-            for row in cursor:
-                data = dict(row)
-                # SQLite might return timestamp as string or datetime depending on driver/version
-                if data["last_visit_time"] and not (
-                    data["last_visit_time"] is None
-                ):  # Simple check
-                    import datetime
+            return DatabaseManager._fetch_select_cursor(
+                conn.execute("SELECT * FROM surface_spots")
+            )
 
-                    try:
-                        # If it is a string, convert it.
-                        if isinstance(data["last_visit_time"], str):
-                            data["last_visit_time"] = datetime.datetime.fromisoformat(
-                                data["last_visit_time"]
-                            )
-                    except (ValueError, TypeError):
-                        pass
-                spots.append(MiningSpot(**data))
-        return spots
+    def get_planetary_spots(self, location: PlayerLocation | None) -> list[SurfaceSpot]:
+        """Fetches records for the current planet if any."""
+        if location is None or not location.body_name:
+            return []
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            return DatabaseManager._fetch_select_cursor(
+                conn.execute(
+                    "SELECT * FROM surface_spots WHERE star_system = ? AND body_name = ?",
+                    (location.star_system, location.body_name),
+                )
+            )
 
     def update_spot(self, spot_id: int, **kwargs) -> bool:
         if not kwargs:
             return False
         keys = [f"{k} = ?" for k in kwargs.keys()]
         values = list(kwargs.values())
-        sql = f"UPDATE mining_spots SET {', '.join(keys)} WHERE id = ?"
+        sql = f"UPDATE surface_spots SET {', '.join(keys)} WHERE id = ?"
         values.append(spot_id)
 
         try:
@@ -103,19 +126,19 @@ class DatabaseManager:
     def delete_spot(self, spot_id: int) -> bool:
         try:
             with self._get_connection() as conn:
-                conn.execute("DELETE FROM mining_spots WHERE id = ?", (spot_id,))
+                conn.execute("DELETE FROM surface_spots WHERE id = ?", (spot_id,))
                 dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
                 return True
         except sqlite3.Error as e:
             print(f"Database error during delete_spot: {e}")
             return False
 
-    def find_closest_by_mineral(self, mineral_type: str) -> list[MiningSpot]:
+    def find_closest_by_mineral(self, mineral_type: str) -> list[SurfaceSpot]:
         spots = []
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM mining_spots WHERE mineral_type LIKE ?",
+                "SELECT * FROM surface_spots WHERE mineral_type LIKE ?",
                 (f"%{mineral_type}%",),
             )
             for row in cursor:
@@ -130,7 +153,7 @@ class DatabaseManager:
                             )
                     except (ValueError, TypeError):
                         pass
-                spots.append(MiningSpot(**data))
+                spots.append(SurfaceSpot(**data))
         return spots
 
     def update_visit_time(
@@ -141,7 +164,7 @@ class DatabaseManager:
         with self._get_connection() as conn:
             conn.execute(
                 """
-                UPDATE mining_spots 
+                UPDATE surface_spots 
                 SET last_visit_time = ? 
                 WHERE star_system = ? AND body_name = ? AND latitude BETWEEN ? - 0.01 AND ? + 0.01 
                   AND longitude BETWEEN ? - 0.01 AND ? + 0.01
