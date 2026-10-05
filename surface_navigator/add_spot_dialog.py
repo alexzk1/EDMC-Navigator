@@ -19,8 +19,8 @@ class AddSpotDialog(tk.Toplevel):
         self.title("Add Spot...")
         self.db_manager = db_manager
 
-        window_width = 380
-        window_height = 500
+        window_width = 400
+        window_height = 550
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         x = (screen_width // 2) - (window_width // 2)
@@ -34,6 +34,7 @@ class AddSpotDialog(tk.Toplevel):
         fields = [
             ("Note", "note"),
             ("Mining Spot #:", "spot"),
+            ("Mining Rigs Max:", "miners_count"),
             ("Mineral Type:", "mineral"),
             ("Star System:", "system"),
             ("Body Name:", "body"),
@@ -47,6 +48,8 @@ class AddSpotDialog(tk.Toplevel):
             entry = ttk.Entry(container)
             entry.pack(fill=tk.X, pady=(0, 10))
             self.entries[key] = entry
+
+        self.entries["miners_count"].insert(0, "1")
 
         # Auto-populate from current location
         if current_location:
@@ -102,11 +105,21 @@ class AddSpotDialog(tk.Toplevel):
 
             mineral = empty_str_as_none("mineral")
             spot_num_raw = empty_str_as_none("spot")
+            rigs_count_raw = empty_str_as_none("miners_count")
 
             try:
                 spot_number = int(spot_num_raw) if spot_num_raw else None
+                if spot_number is not None and spot_number < 1:
+                    raise ValueError("111")
             except ValueError:
-                raise ValueError("Mining Spot # must be an integer.")
+                raise ValueError("Mining Spot # must be an positive integer.")
+
+            try:
+                rigs_count = int(rigs_count_raw) if rigs_count_raw else 1
+                if rigs_count < 1:
+                    raise ValueError("111")
+            except ValueError:
+                raise ValueError("Rigs Count must be an positive integer.")
 
             spot = SurfaceSpot(
                 star_system=self.entries["system"].get(),
@@ -118,6 +131,7 @@ class AddSpotDialog(tk.Toplevel):
                 mineral_original=mineral,
                 spot_number=spot_number,
                 notes=empty_str_as_none("note"),
+                max_miners=rigs_count,
             )
             if spot.star_system and spot.body_name:
                 if self.db_manager.add_spot(spot):
