@@ -88,7 +88,14 @@ class SurfaceNavigatorPlugin:
                 # Reset any stored navigation in overlay, we're out...
                 self._overlay.navigate_to(None)
                 return True
-            case "ApproachBody" | "Touchdown" | "Liftoff" | "Embark" | "Disembark":
+            case (
+                "ApproachBody"
+                | "Touchdown"
+                | "Liftoff"
+                | "Embark"
+                | "Disembark"
+                | "SupercruiseExit"
+            ):
                 dirty_new_body = entry.get("Body") or ""
                 had_approach = True
             case "ApproachSettlement":
