@@ -97,6 +97,7 @@ class Commodities:
 
     @classmethod
     def resolve_db_value(cls, raw_input: str | None) -> str | None:
+        """Resolves exact string which we should write to DB."""
         if not raw_input:
             return None
 
