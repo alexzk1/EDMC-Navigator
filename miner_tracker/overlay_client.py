@@ -95,6 +95,12 @@ class OverlayClient:
         else:
             return NavigationStatus.APPROACHING
 
+    @staticmethod
+    def format_distance(dist: float) -> str:
+        if dist < 1000:
+            return f"{round(dist)} m"
+        return f"{dist / 1000:.2f} km"
+
     def _update_navigation(self):
         if (
             self._destination is None
@@ -128,8 +134,9 @@ class OverlayClient:
         bearing = NavigationUtils.calculate_bearing(
             self._location.player_coord, self._destination
         )
+        dist_txt = OverlayClient.format_distance(dist)
         if self.supports_multiline():
-            txt = f"Bearing: {bearing:.2f}°\nDistance: {dist:.2f}(m)"
+            txt = f"NAVIGATING:\n\tBearing: {bearing:.2f}°\n\tDistance: {dist_txt}"
             self._overlay.send_message(
                 # Using the same ID will replace existing message on overlay and set fresh timeout.
                 OverlayClient.MESSAGE_ID,
@@ -143,8 +150,8 @@ class OverlayClient:
             return
         # Backup plan for other older overlay implementations which support only 1 strict line output.
         self._overlay.send_message(
-            OverlayClient.MESSAGE_ID,
-            f"Bearing: {bearing:.2f}(deg)",
+            OverlayClient.MESSAGE_ID + "n",
+            "NAVIGATING:",
             self._config.color,
             self._config.left,
             self._config.top,
@@ -152,12 +159,21 @@ class OverlayClient:
             self._config.size,
         )
         self._overlay.send_message(
+            OverlayClient.MESSAGE_ID,
+            f"Bearing: {bearing:.2f}(deg)",
+            self._config.color,
+            self._config.left + 5,
+            self._config.top + 20,
+            OverlayClient.TEXT_TIMEOUT_SEC,
+            self._config.size,
+        )
+        self._overlay.send_message(
             # Different ID so we don't erase 1st line.
             OverlayClient.MESSAGE_ID + "1",
-            f"Distance: {dist:.2f}(m)",
+            f"Distance: {dist_txt}",
             self._config.color,
-            self._config.left,
-            self._config.top + 20,  # Estimated vertical size of the 1st line.
+            self._config.left + 5,
+            self._config.top + 40,  # Estimated vertical size of the 1st line.
             OverlayClient.TEXT_TIMEOUT_SEC,
             self._config.size,
         )
