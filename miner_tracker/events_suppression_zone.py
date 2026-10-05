@@ -10,22 +10,32 @@ class EventsSuppressionManager:
     """
 
     def __init__(self, radius_meters: float):
-        self.radius = radius_meters
-        self._active_zones: list[SurfacePoint] = []
+        self._radius = radius_meters
         self._location: PlayerLocation | None = None
+
+        self._active_zones: list[SurfacePoint] = []
 
         dispatcher.subscribe(
             KnownEvents.POSITION_UPDATED, self._location_update_listener
         )
+        dispatcher.subscribe(
+            KnownEvents.DATA_BASE_MODIFIED, self._new_db_record_listener
+        )
+
+    def location(self):
+        return self._location
+
+    def radius(self):
+        return self._radius
 
     def is_suppressed(self, current_pos: SurfacePoint) -> bool:
         """Checks if given point is inside exclusion zone."""
 
         for zone_pos in self._active_zones:
             dist = NavigationUtils.haversine_distance(
-                current_pos, zone_pos, self.radius
+                current_pos, zone_pos, self._radius
             )
-            if dist <= self.radius:
+            if dist <= self._radius:
                 return True
 
         return False
@@ -41,10 +51,22 @@ class EventsSuppressionManager:
         if self._location is not None:
             self._active_zones.append(point)
 
+    def set_exclusion_zone_at_srv_location(self):
+        if self._location is None or self._location.srv_coord is None:
+            return
+        self.add_exclusion_zone_center(self._location.srv_coord)
+
     def _location_update_listener(self, data: EventParams):
         self._location = data.location
         # Location None is sent only when we left the planet for KnownEvents.POSITION_UPDATED.
         if self._location is None:
+            self._active_zones = []
+
+    def _new_db_record_listener(self, data: EventParams):
+        # This is situation when mining started, zone got excluded as "no marks here" and then user adds the mark.
+        if data.params.get("new_record", False):
+            # For simplicity, reset all current exclusion zones when new mark is added and let'em rebuilt.
+            # Note, we could make complex check and find closest to new mark.
             self._active_zones = []
 
 

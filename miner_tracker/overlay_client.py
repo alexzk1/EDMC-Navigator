@@ -3,7 +3,12 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .player_location import NavigationUtils, PlayerLocation, SurfacePoint
+from .player_location import (
+    DEFAULT_PLANET_RADIUS,
+    NavigationUtils,
+    PlayerLocation,
+    SurfacePoint,
+)
 
 try:
     try:
@@ -38,7 +43,6 @@ class OverlayClient:
     # Timeout should be long enough to cover log update to avoid flickering,
     # and it should be short enough to avoid annoyance.
     TEXT_TIMEOUT_SEC: int = 10
-    DEFAULT_PLANET_RADIUS = 6371000.0
     MESSAGE_ID = "navigator_message"
 
     def __init__(self, conf: OverlayTextConf):
@@ -113,7 +117,7 @@ class OverlayClient:
         dist = NavigationUtils.haversine_distance(
             self._location.player_coord,
             self._destination,
-            self._location.radius_meters or OverlayClient.DEFAULT_PLANET_RADIUS,
+            self._location.radius_meters or DEFAULT_PLANET_RADIUS,
         )
         status = OverlayClient._get_navigation_status(dist)
         if status == NavigationStatus.REACHED:

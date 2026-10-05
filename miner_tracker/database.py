@@ -1,8 +1,10 @@
+import math
 import sqlite3
+from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import SurfaceSpot
-from .player_location import PlayerLocation
+from .player_location import PlayerLocation, SurfacePoint
 
 
 class DatabaseManager:
@@ -32,6 +34,60 @@ class DatabaseManager:
                     notes TEXT
                 )
             """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_spots_location ON surface_spots (star_system, body_name)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_spots_coords ON surface_spots (latitude, longitude)"
+            )
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_incomplete_mining_spots 
+                ON surface_spots (latitude, longitude) 
+                WHERE mineral_type IS NULL AND mineral_original IS NULL
+            """)
+
+    def find_incomplete_surface_mining_spot(
+        self, center: SurfacePoint, radius_meters: float, planet_radius_meters: float
+    ) -> SurfaceSpot | None:
+        """
+        Finds single mining spot around the center in radius which does not have mined mineral set in DB.
+        Radius must be small enough to assume surface is flat.
+        """
+
+        cos_lat = math.cos(math.radians(center.latitude))
+        deg_radius_sq = (radius_meters / planet_radius_meters) ** 2
+        sql = """  
+            SELECT *  
+            FROM surface_spots  
+            WHERE mineral_type IS NULL  
+              AND mineral_original IS NULL  
+              AND (  
+                  (latitude - ?)**2 +  
+                  ((longitude - ?) * ?)**2 < ?  
+              )  
+            ORDER BY (  
+                (latitude - ?)**2 +  
+                ((longitude - ?) * ?)**2  
+            ) ASC  
+            LIMIT 1
+        """
+        params = (
+            # WHERE
+            center.latitude,
+            center.longitude,
+            cos_lat,
+            deg_radius_sq,
+            # ORDER BY
+            center.latitude,
+            center.longitude,
+            cos_lat,
+        )
+        with self._get_connection() as conn:
+            cursor = conn.execute(sql, params)
+            spots = self._fetch_select_cursor(cursor)
+            if len(spots) < 1:
+                return None
+            return spots[0]
 
     def add_spot(self, spot: SurfaceSpot) -> bool:
         try:
@@ -63,7 +119,16 @@ class DatabaseManager:
 
             # Let the transaction to finish!
             if success:
-                dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+                dispatcher.dispatch(
+                    KnownEvents.DATA_BASE_MODIFIED,
+                    EventParams(
+                        params={
+                            "new_record": True,
+                            "latitude": spot.latitude,
+                            "longitude": spot.longitude,
+                        }
+                    ),
+                )
             return success
         except sqlite3.Error as e:
             print(f"Database error during add_spot: {e}")
@@ -113,10 +178,10 @@ class DatabaseManager:
                 )
             )
 
-    def update_spot(self, spot_id: int, **kwargs) -> bool:
+    def update_spot(self, spot_id: int, **kwargs: Any) -> bool:
         if not kwargs:
             return False
-        keys = [f"{k} = ?" for k in kwargs.keys()]
+        keys = [f"{k} = ?" for k in kwargs]
         values = list(kwargs.values())
         sql = f"UPDATE surface_spots SET {', '.join(keys)} WHERE id = ?"
         values.append(spot_id)

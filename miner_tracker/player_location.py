@@ -10,6 +10,9 @@ class SurfacePoint:
     longitude: float
 
 
+DEFAULT_PLANET_RADIUS = 6371000.0
+
+
 @dataclass(slots=True)
 class PlayerLocation:
     """Represent the player's transient spatial state."""
