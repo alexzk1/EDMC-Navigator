@@ -2,5 +2,5 @@
 
 set -e
 
-python3 -m py_compile miner_tracker/*.py
-pyflakes miner_tracker/*.py
+python3 -m py_compile surface_navigator/*.py
+pyflakes surface_navigator/*.py
