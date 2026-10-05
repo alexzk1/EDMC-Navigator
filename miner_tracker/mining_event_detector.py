@@ -3,6 +3,7 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
+from .mined_names import Commodities
 
 logger = logging.getLogger("SurfaceNavigator")
 
@@ -36,19 +37,22 @@ class RhinoMiningEventDetector:
 
     def _is_mining_event(self, entry: Mapping[str, Any]) -> bool:
         """Identifies if the event is a mining/extraction record."""
-        # "MiningRefined" matches what user indicated in log example
-        # FIXME: it is invalid parsing here. We need to check couple lines! Before and after.
         return entry.get("event") == "MiningRefined"
 
     def _process_mining_record(self, system: str, entry: Mapping[str, Any]):
         """Processes a mining record and triggers notification."""
 
-        # FIXME: it is invalid parsing here.
-        mineral = entry.get("Type", "Unknown Mineral")
-        logger.info(f"MinerTracker: Processing {mineral} in {system}")
-
+        mineral = entry.get("Type")
+        if not mineral:
+            return
+        fuzzy_mineral = Commodities.resolve_db_value(mineral)
         # Dispatch event so the UI can refresh or show overlay messages
         dispatcher.dispatch(
             KnownEvents.RHINO_MINING_DETECTED,
-            EventParams(params={"mineral": mineral}),
+            EventParams(
+                params={
+                    "mineral_in_log": mineral,
+                    "mineral_db": fuzzy_mineral,
+                }
+            ),
         )
