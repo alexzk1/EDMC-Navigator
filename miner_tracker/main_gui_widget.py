@@ -23,9 +23,6 @@ class MainGUIWidget(ttk.Frame):
         self._load_data()
 
         dispatcher.subscribe(
-            KnownEvents.RHINO_MINING_DETECTED, self._on_mining_record_found
-        )
-        dispatcher.subscribe(
             KnownEvents.DATA_BASE_MODIFIED, lambda data: self._refresh()
         )
         dispatcher.subscribe(KnownEvents.POSITION_UPDATED, self._set_current_location)
@@ -114,14 +111,6 @@ class MainGUIWidget(ttk.Frame):
                 )
         except (ValueError, IndexError, RuntimeError) as e:
             messagebox.showwarning("Navigation error", f"{e}")
-
-    def _on_mining_record_found(self, data: EventParams):
-        # TODO: Implement logic: if latest mark is in close radius to latest known position and it has missing fields,
-        # then update it DB record by those mining data. Note, it should be somehow cached to avoid repeated checks,
-        # as mining signal is expected to repeated often while user keeps doing it.
-        # Another note, probably logic must be in DB handler.
-        # self._refresh()
-        pass
 
     def _refresh(self):
         self._load_data()

@@ -11,6 +11,7 @@ try:
     from .mining_event_detector import RhinoMiningEventDetector
     from .overlay_client import OverlayClient, OverlayTextConf
     from .player_location import PlayerLocation, SurfacePoint
+    from .rhino_db_updater import RhinoMiningDbUpdater
     from .status_flags import StatusFlags
 except ImportError:
     import sys
@@ -25,6 +26,7 @@ except ImportError:
     from mining_event_detector import RhinoMiningEventDetector
     from overlay_client import OverlayClient, OverlayTextConf
     from player_location import PlayerLocation, SurfacePoint
+    from rhino_db_updater import RhinoMiningDbUpdater
     from status_flags import StatusFlags
 
 logger = logging.getLogger("SurfaceNavigator")
@@ -34,6 +36,9 @@ class MinerTrackerPlugin:
     def __init__(self, plugin_dir: str):
         db_path = os.path.join(plugin_dir, "surface_spots_tracker.db")
         self.db_manager = DatabaseManager(db_path)
+
+        # Automatic DB update if user do not enter whole description and just starts mining near the marked spot.
+        self.rhino_auto_update_db = RhinoMiningDbUpdater(self.db_manager)
 
         # TODO: add settings to configure overlay position
         self._overlay = OverlayClient(OverlayTextConf())
