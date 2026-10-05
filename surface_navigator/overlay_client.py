@@ -69,8 +69,44 @@ class OverlayClient:
         dispatcher.subscribe(KnownEvents.POSITION_UPDATED, self._update_location)
 
     def _update_location(self, data: EventParams):
+        had_navigation: bool = self._location is not None and bool(
+            self._location.body_name
+        )
+        will_have_navigation = data.location is not None and bool(
+            data.location.body_name
+        )
         self._location = data.location
         self._update_navigation()
+
+        if had_navigation != will_have_navigation:
+            self._visualize_navigation_switch(will_have_navigation)
+
+    def _visualize_navigation_switch(self, is_going_on: bool):
+        if self._overlay is None:
+            return
+
+        if self.supports_svg():
+            approaching: str = """
+            <svg xmlns:xlink="http://www.w3.org/1999/xlink" height="36" width="160" xmlns="http://www.w3.org/2000/svg" ><defs ></defs> <rect x="0" rx="18.0" ry="18.0" y="0" height="36" width="160" stroke="#00FF88" stroke-width="1.5" fill="rgba(0, 0, 0, 0.12)" /> <circle cx="20" cy="18.0" r="5" fill="#00FF88" /> <text x="35" y="23.0" font-weight="bold" font-family="Arial, sans-serif" font-size="14" fill="#00FF88" >APPROACHING</text></svg>
+            """
+            leaving: str = """<svg xmlns:xlink="http://www.w3.org/1999/xlink" height="36" width="160" xmlns="http://www.w3.org/2000/svg" ><defs ></defs> <rect x="0" rx="18.0" ry="18.0" y="0" height="36" width="160" stroke="#FF3344" stroke-width="1.5" fill="rgba(0, 0, 0, 0.12)" /> <circle cx="20" cy="18.0" r="5" fill="#FF3344" /> <text x="35" y="23.0" font-weight="bold" font-family="Arial, sans-serif" font-size="14" fill="#FF3344" >LEAVING</text></svg>"""
+            self._overlay.send_svg(
+                OverlayClient.MESSAGE_ID + "svg",
+                approaching if is_going_on else leaving,
+                self._config.left,
+                self._config.top,
+                OverlayClient.TEXT_TIMEOUT_SEC,
+            )
+        else:
+            self._overlay.send_message(
+                OverlayClient.MESSAGE_ID + "svg",
+                "Approaching" if is_going_on else "Leaving",
+                "#00FF88" if is_going_on else "#FF3344",
+                self._config.left,
+                self._config.top,
+                OverlayClient.TEXT_TIMEOUT_SEC,
+                self._config.size,
+            )
 
     def is_available(self) -> bool:
         return self._overlay is not None
