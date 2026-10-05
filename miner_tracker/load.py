@@ -7,7 +7,7 @@ from typing import Any
 try:
     from .database import DatabaseManager
     from .events_dispatcher import EventParams, KnownEvents, dispatcher
-    from .gui import MinerTrackerGUI
+    from .main_gui_widget import MainGUIWidget
     from .mining_event_detector import RhinoMiningEventDetector
     from .overlay_client import OverlayClient, OverlayTextConf
     from .player_location import PlayerLocation, SurfacePoint
@@ -21,7 +21,7 @@ except ImportError:
 
     from database import DatabaseManager
     from events_dispatcher import EventParams, KnownEvents, dispatcher
-    from gui import MinerTrackerGUI
+    from main_gui_widget import MainGUIWidget
     from mining_event_detector import RhinoMiningEventDetector
     from overlay_client import OverlayClient, OverlayTextConf
     from player_location import PlayerLocation, SurfacePoint
@@ -38,11 +38,10 @@ class MinerTrackerPlugin:
         # TODO: add settings to configure overlay position
         self._overlay = OverlayClient(OverlayTextConf())
         self._mining_detector = RhinoMiningEventDetector()
-        self._gui: MinerTrackerGUI | None = None
+        self._gui: MainGUIWidget | None = None
 
         # Current game state tracking
         self.current_location: PlayerLocation | None = None
-        self.is_on_surface: bool = False
 
     def handle_journal_event(
         self,
@@ -233,11 +232,10 @@ class MinerTrackerPlugin:
             KnownEvents.POSITION_UPDATED, EventParams(location=self.current_location)
         )
 
-    def create_gui(self, parent: Any) -> MinerTrackerGUI | None:
+    def create_gui(self, parent: Any) -> MainGUIWidget | None:
         if self._gui is None:
-            self._gui = MinerTrackerGUI(parent, self.db_manager, self._overlay)
+            self._gui = MainGUIWidget(parent, self.db_manager, self._overlay)
             self._gui.current_location = self.current_location
-            self._gui.has_coords = self.is_on_surface
         return self._gui
 
     def shutdown(self):
@@ -275,7 +273,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: dict[str, Any]) -> str:
     return ""
 
 
-def plugin_app(parent: Any) -> MinerTrackerGUI | None:
+def plugin_app(parent: Any) -> MainGUIWidget | None:
     if _instance:
         return _instance.create_gui(parent)
     return None

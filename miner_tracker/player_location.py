@@ -20,7 +20,7 @@ class PlayerLocation:
     player_coord: SurfacePoint | None = None
     # Latest known SRV coordinate.
     srv_coord: SurfacePoint | None = None
-    # Radius of the planet
+    # Radius of the planet.
     radius_meters: float | None = None
     heading_deg: float | None = None
     is_boarded_srv: bool = True
