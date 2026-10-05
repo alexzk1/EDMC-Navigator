@@ -209,28 +209,19 @@ class DatabaseManager:
             print(f"Database error during delete_spot: {e}")
             return False
 
-    def find_closest_by_mineral(self, mineral_type: str) -> list[SurfaceSpot]:
-        spots = []
+    def find_by_mineral(self, mineral_type: str) -> list[SurfaceSpot]:
+        """Lists all spots by mineral. Warning! This can be a lot."""
+        to_find = f"%{mineral_type}%"
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
-                "SELECT * FROM surface_spots WHERE mineral_type LIKE ?",
-                (f"%{mineral_type}%",),
+                "SELECT * FROM surface_spots WHERE mineral_type LIKE ? OR mineral_original LIKE ?",
+                (
+                    to_find,
+                    to_find,
+                ),
             )
-            for row in cursor:
-                data = dict(row)
-                if data["last_visit_time"]:
-                    import datetime
-
-                    try:
-                        if isinstance(data["last_visit_time"], str):
-                            data["last_visit_time"] = datetime.datetime.fromisoformat(
-                                data["last_visit_time"]
-                            )
-                    except (ValueError, TypeError):
-                        pass
-                spots.append(SurfaceSpot(**data))
-        return spots
+            return self._fetch_select_cursor(cursor)
 
     def update_visit_time(
         self, star_system: str, body_name: str, lat: float, lon: float

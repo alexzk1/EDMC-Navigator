@@ -2,9 +2,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any
 
-from miner_tracker.mined_names import Commodities
-
 from .database import DatabaseManager
+from .mined_names import Commodities
 from .models import SurfaceSpot
 from .player_location import PlayerLocation
 

@@ -32,9 +32,9 @@ except ImportError:
 logger = logging.getLogger("SurfaceNavigator")
 
 
-class MinerTrackerPlugin:
+class SurfaceNavigatorPlugin:
     def __init__(self, plugin_dir: str):
-        db_path = os.path.join(plugin_dir, "surface_spots_tracker.db")
+        db_path = os.path.join(plugin_dir, "surface_navigator.db")
         self.db_manager = DatabaseManager(db_path)
 
         # Automatic DB update if user do not enter whole description and just starts mining near the marked spot.
@@ -249,13 +249,13 @@ class MinerTrackerPlugin:
 
 
 # Global plugin instance for EDMC to hold onto
-_instance: MinerTrackerPlugin | None = None
+_instance: SurfaceNavigatorPlugin | None = None
 
 
 def plugin_start3(plugin_dir: str) -> str:
     global _instance
-    _instance = MinerTrackerPlugin(plugin_dir)
-    return "Miner Tracker"
+    _instance = SurfaceNavigatorPlugin(plugin_dir)
+    return "Surface Navigator"
 
 
 def journal_entry(
