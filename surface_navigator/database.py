@@ -16,7 +16,9 @@ class DatabaseManager:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
     @staticmethod
     def now_utc():
@@ -76,36 +78,42 @@ class DatabaseManager:
         if not star or not body:
             return None
 
-        cos_lat = math.cos(math.radians(center.latitude))
-        deg_radius_sq = (radius_meters / planet_radius_meters) ** 2
+        lat_rad = math.radians(center.latitude)
+        cos_lat = math.cos(lat_rad)
+        cos_lat_sq = cos_lat * cos_lat
+        deg_ratio = (radius_meters / planet_radius_meters) * (180 / math.pi)
+        deg_radius_sq = deg_ratio**2
+
         sql = """  
             SELECT *  
             FROM surface_spots  
             WHERE mineral_type IS NULL  
-              AND mineral_original IS NULL  
-              AND star_system = ? AND body_name = ?
-              AND (  
-                  (latitude - ?)**2 +  
-                  ((longitude - ?) * ?)**2 < ?  
-              )  
-            ORDER BY (  
-                (latitude - ?)**2 +  
-                ((longitude - ?) * ?)**2  
-            ) ASC  
+                AND mineral_original IS NULL  
+                AND star_system = ? AND body_name = ?
+                AND (      
+                    (latitude - ?) * (latitude - ?) +   
+                    (longitude - ?) * (longitude - ?) * ?
+                ) < ?      
+                ORDER BY (      
+                    (latitude - ?) * (latitude - ?) +    
+                    (longitude - ?) * (longitude - ?) * ?    
+                ) ASC  
             LIMIT 1
         """
         params = (
-            # WHERE
             star,
             body,
-            center.latitude,
-            center.longitude,
-            cos_lat,
-            deg_radius_sq,
-            # ORDER BY
-            center.latitude,
-            center.longitude,
-            cos_lat,
+            center.latitude,  # WHERE lat1
+            center.latitude,  # WHERE lat2
+            center.longitude,  # WHERE lon1
+            center.longitude,  # WHERE lon2
+            cos_lat_sq,  # WHERE cos_sq
+            deg_radius_sq,  # WHERE R^2
+            center.latitude,  # ORDER BY lat1
+            center.latitude,  # ORDER BY lat2
+            center.longitude,  # ORDER BY lon1
+            center.longitude,  # ORDER BY lon2
+            cos_lat_sq,  # ORDER BY cos_sq
         )
         with self._get_connection() as conn:
             cursor = conn.execute(sql, params)
@@ -125,42 +133,57 @@ class DatabaseManager:
         if not star or not body:
             return
 
-        cos_lat = math.cos(math.radians(center.latitude))
-        deg_radius_sq = (radius_meters / planet_radius_meters) ** 2
+        lat_rad = math.radians(center.latitude)
+        cos_lat = math.cos(lat_rad)
+        cos_lat_sq = cos_lat * cos_lat
+
+        deg_ratio = (radius_meters / planet_radius_meters) * (180 / math.pi)
+        deg_radius_sq = deg_ratio**2
 
         sql = """    
-            UPDATE surface_spots    
-            SET last_visit_time = ?    
-            WHERE star_system = ? AND body_name = ?    
-                      AND (    
-                          (latitude - ?)**2 +    
-                          ((longitude - ?) * ?)**2 < ?    
-                      )    
-            ORDER BY (    
-                (latitude - ?)**2 +    
-                ((longitude - ?) * ?)**2    
-            ) ASC    
-            LIMIT 1  
+            SELECT id FROM surface_spots                        
+            WHERE star_system = ? AND body_name = ?      
+                      AND (      
+                          (latitude - ?) * (latitude - ?) +   
+                          (longitude - ?) * (longitude - ?) * ?
+                      ) < ?      
+            ORDER BY (      
+                (latitude - ?) * (latitude - ?) +    
+                (longitude - ?) * (longitude - ?) * ?    
+            ) ASC      
+            LIMIT 1    
         """
 
         params = (
-            DatabaseManager.now_utc(),  # SET last_visit_time
             star,  # WHERE star_system
             body,  # WHERE body_name
-            center.latitude,  # WHERE latitude
-            center.longitude,  # WHERE longitude
-            cos_lat,  # WHERE cos_lat
-            deg_radius_sq,  # WHERE radius_sq
-            center.latitude,  # ORDER BY lat
-            center.longitude,  # ORDER BY lon
-            cos_lat,  # ORDER BY cos_lat
+            center.latitude,  # WHERE lat1
+            center.latitude,  # WHERE lat2
+            center.longitude,  # WHERE lon1
+            center.longitude,  # WHERE lon2
+            cos_lat_sq,  # WHERE cos_sq
+            deg_radius_sq,  # WHERE R^2
+            center.latitude,  # ORDER BY lat1
+            center.latitude,  # ORDER BY lat2
+            center.longitude,  # ORDER BY lon1
+            center.longitude,  # ORDER BY lon2
+            cos_lat_sq,  # ORDER BY cos_sq
         )
 
         try:
             with self._get_connection() as conn:
-                conn.execute(sql, params)
+                cursor = conn.execute(sql, params)
+                row = cursor.fetchone()
+                if row:
+                    target_id = row[0]
+                    # Step 2: Update that specific ID
+                    conn.execute(
+                        "UPDATE surface_spots SET last_visit_time = ? WHERE id = ?",
+                        (DatabaseManager.now_utc(), target_id),
+                    )
+
             # Let the transaction to finish!
-            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+            dispatcher.dispatch(KnownEvents.DATABASE_MODIFIED, EventParams())
         except sqlite3.Error as e:
             logger.error(f"Database error during update_visit_time: {e}")
 
@@ -195,7 +218,7 @@ class DatabaseManager:
             # Let the transaction to finish!
             if success:
                 dispatcher.dispatch(
-                    KnownEvents.DATA_BASE_MODIFIED,
+                    KnownEvents.DATABASE_MODIFIED,
                     EventParams(
                         params={
                             "new_record": True,
@@ -235,7 +258,6 @@ class DatabaseManager:
     def get_all_spots(self) -> list[SurfaceSpot]:
         """Fetches ALL records from DB. Warning! It can explode things."""
         with self._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
             return DatabaseManager._fetch_select_cursor(
                 conn.execute("SELECT * FROM surface_spots")
             )
@@ -245,7 +267,6 @@ class DatabaseManager:
         if location is None or not location.body_name:
             return []
         with self._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
             return DatabaseManager._fetch_select_cursor(
                 conn.execute(
                     "SELECT * FROM surface_spots WHERE star_system = ? AND body_name = ?",
@@ -266,7 +287,7 @@ class DatabaseManager:
                 conn.execute(sql, values)
 
             # Let the transaction to finish!
-            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+            dispatcher.dispatch(KnownEvents.DATABASE_MODIFIED, EventParams())
             return True
         except sqlite3.Error as e:
             logger.error(f"Database error during update_spot: {e}")
@@ -278,7 +299,7 @@ class DatabaseManager:
                 conn.execute("DELETE FROM surface_spots WHERE id = ?", (spot_id,))
 
             # Let the transaction to finish!
-            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+            dispatcher.dispatch(KnownEvents.DATABASE_MODIFIED, EventParams())
             return True
         except sqlite3.Error as e:
             logger.error(f"Database error during delete_spot: {e}")
@@ -288,7 +309,6 @@ class DatabaseManager:
         """Lists all spots by mineral. Warning! This can be a lot."""
         to_find = f"%{mineral_type}%"
         with self._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM surface_spots WHERE mineral_type LIKE ? OR mineral_original LIKE ?",
                 (

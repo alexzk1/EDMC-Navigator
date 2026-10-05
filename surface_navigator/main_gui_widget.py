@@ -23,7 +23,7 @@ class MainGUIWidget(ttk.Frame):
         self._load_data()
 
         dispatcher.subscribe(
-            KnownEvents.DATA_BASE_MODIFIED, lambda data: self._refresh()
+            KnownEvents.DATABASE_MODIFIED, lambda data: self._refresh()
         )
         dispatcher.subscribe(KnownEvents.POSITION_UPDATED, self._set_current_location)
 

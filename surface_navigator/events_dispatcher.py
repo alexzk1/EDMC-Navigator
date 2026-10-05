@@ -53,6 +53,6 @@ dispatcher = EventDispatcher()
 
 class KnownEvents:
     RHINO_MINING_DETECTED: str = "mining_record_detected"
-    DATA_BASE_MODIFIED: str = "data_base_modified"
+    DATABASE_MODIFIED: str = "data_base_modified"
     # Provides valid location field.
     POSITION_UPDATED: str = "position_updated"

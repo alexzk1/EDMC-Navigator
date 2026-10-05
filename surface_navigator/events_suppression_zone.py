@@ -19,7 +19,7 @@ class EventsSuppressionManager:
             KnownEvents.POSITION_UPDATED, self._location_update_listener
         )
         dispatcher.subscribe(
-            KnownEvents.DATA_BASE_MODIFIED, self._new_db_record_listener
+            KnownEvents.DATABASE_MODIFIED, self._new_db_record_listener
         )
 
     def location(self):

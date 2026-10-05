@@ -37,7 +37,7 @@ class Commodities:
     @classmethod
     def load_commodity_map(cls) -> None:
         # Mined resources are not rares, so we don't load rares list.
-        for f in "commodity.csv":
+        for f in ["commodity.csv"]:
             if not (config.app_dir_path / "FDevIDs" / f).is_file():
                 continue
             with open(
