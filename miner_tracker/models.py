@@ -13,7 +13,8 @@ class SurfaceSpot:
     latitude: float = 0.0
     longitude: float = 0.0
     spot_number: int | None = None
-    mineral_type: str | None = None
+    mineral_type: str | None = None  # Fuzzy matched value against dictionary.
+    mineral_original: str | None = None  # Original provided value.
     amount: float | None = None
     density: float | None = None
     max_miners: int = 1
@@ -28,6 +29,7 @@ class SurfaceSpot:
             "longitude": self.longitude,
             "spot_number": self.spot_number,
             "mineral_type": self.mineral_type,
+            "mineral_original": self.mineral_original,
             "amount": self.amount,
             "density": self.density,
             "max_miners": self.max_miners,

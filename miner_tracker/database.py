@@ -24,6 +24,7 @@ class DatabaseManager:
                     longitude REAL NOT NULL,
                     spot_number INTEGER,
                     mineral_type TEXT,
+                    mineral_original TEXT,
                     amount REAL,
                     density REAL,
                     max_miners INTEGER DEFAULT 1,
@@ -40,8 +41,8 @@ class DatabaseManager:
                     """
                     INSERT INTO surface_spots (
                         star_system, body_name, latitude, longitude, 
-                        spot_number, mineral_type, amount, density, max_miners, last_visit_time, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        spot_number, mineral_type, mineral_original, amount, density, max_miners, last_visit_time, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         spot.star_system,
@@ -50,6 +51,7 @@ class DatabaseManager:
                         spot.longitude,
                         spot.spot_number,
                         spot.mineral_type,
+                        spot.mineral_original,
                         spot.amount,
                         spot.density,
                         spot.max_miners,

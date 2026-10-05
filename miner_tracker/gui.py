@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any
 
+from miner_tracker.mined_names import Commodities
+
 from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import SurfaceSpot
@@ -98,6 +100,7 @@ class AddSpotDialog(tk.Toplevel):
             if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
                 raise ValueError("Coordinates out of range (-90 to 90, -180 to 180).")
 
+            mineral = empty_str_as_none("mineral")
             # Handle empty spot number string
             spot_num = empty_str_as_none("spot")
             spot = SurfaceSpot(
@@ -105,7 +108,9 @@ class AddSpotDialog(tk.Toplevel):
                 body_name=self.entries["body"].get(),
                 latitude=lat,
                 longitude=lon,
-                mineral_type=empty_str_as_none("mineral"),
+                # Recording both - fuzzy and original input for post-mortem fixes.
+                mineral_type=Commodities.resolve_db_value(mineral),
+                mineral_original=mineral,
                 spot_number=int(spot_num) if spot_num else None,
                 notes=empty_str_as_none("note"),
             )
@@ -197,7 +202,7 @@ class MinerTrackerGUI(ttk.Frame):
                 tk.END,
                 values=(
                     spot.notes or "Unnamed Mark",
-                    spot.mineral_type or "-",
+                    spot.mineral_type or spot.mineral_original or "-",
                     spot.spot_number or "-",
                     spot.latitude,
                     spot.longitude,
