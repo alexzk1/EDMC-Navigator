@@ -52,7 +52,7 @@ class MainGUIWidget(ttk.Frame):
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("note", "mineral", "spot", "lat", "lon", "db_id")
+        columns = ("mineral", "note", "rigs", "nav", "lat", "lon", "db_id")
         self._tree = ttk.Treeview(
             tree_container, columns=columns, show="headings", height=8
         )
@@ -61,7 +61,12 @@ class MainGUIWidget(ttk.Frame):
                 self._tree.column(col, width=0, stretch=False)
                 self._tree.heading(col, text="")
             else:
-                self._tree.column(col, width=120 if col in ["note"] else 70)
+                width = 70
+                if col in ["note"]:
+                    width = 120
+                if col in ["rigs", "nav"]:
+                    width = 20
+                self._tree.column(col, width=width)
                 self._tree.heading(col, text=col.capitalize())
 
         scrollbar = ttk.Scrollbar(
@@ -82,8 +87,9 @@ class MainGUIWidget(ttk.Frame):
                 "",
                 tk.END,
                 values=(
-                    spot.notes or "Unnamed Mark",
                     spot.mineral_type or spot.mineral_original or "-",
+                    spot.notes or "Unnamed Mark",
+                    spot.max_miners,
                     spot.spot_number or "-",
                     spot.latitude,
                     spot.longitude,
