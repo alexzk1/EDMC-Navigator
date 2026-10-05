@@ -1,3 +1,4 @@
+import logging
 import math
 import sqlite3
 from typing import Any
@@ -5,6 +6,8 @@ from typing import Any
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
+
+logger = logging.getLogger("SurfaceNavigator")
 
 
 class DatabaseManager:
@@ -14,6 +17,12 @@ class DatabaseManager:
 
     def _get_connection(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
+
+    @staticmethod
+    def now_utc():
+        import datetime
+
+        return datetime.datetime.now(datetime.timezone.utc)
 
     def _init_db(self):
         with self._get_connection() as conn:
@@ -45,14 +54,27 @@ class DatabaseManager:
                 ON surface_spots (latitude, longitude) 
                 WHERE mineral_type IS NULL AND mineral_original IS NULL
             """)
+            conn.execute("""
+               CREATE INDEX IF NOT EXISTS idx_incomplete_mining_spots  
+               ON surface_spots (star_system, body_name, latitude, longitude)  
+               WHERE mineral_type IS NULL AND mineral_original IS NULL;
+            """)
 
     def find_incomplete_surface_mining_spot(
-        self, center: SurfacePoint, radius_meters: float, planet_radius_meters: float
+        self,
+        star: str,
+        body: str,
+        center: SurfacePoint,
+        radius_meters: float,
+        planet_radius_meters: float,
     ) -> SurfaceSpot | None:
         """
         Finds single mining spot around the center in radius which does not have mined mineral set in DB.
         Radius must be small enough to assume surface is flat.
         """
+
+        if not star or not body:
+            return None
 
         cos_lat = math.cos(math.radians(center.latitude))
         deg_radius_sq = (radius_meters / planet_radius_meters) ** 2
@@ -61,6 +83,7 @@ class DatabaseManager:
             FROM surface_spots  
             WHERE mineral_type IS NULL  
               AND mineral_original IS NULL  
+              AND star_system = ? AND body_name = ?
               AND (  
                   (latitude - ?)**2 +  
                   ((longitude - ?) * ?)**2 < ?  
@@ -73,6 +96,8 @@ class DatabaseManager:
         """
         params = (
             # WHERE
+            star,
+            body,
             center.latitude,
             center.longitude,
             cos_lat,
@@ -88,6 +113,56 @@ class DatabaseManager:
             if len(spots) < 1:
                 return None
             return spots[0]
+
+    def update_visit_time(
+        self,
+        star: str,
+        body: str,
+        center: SurfacePoint,
+        radius_meters: float,
+        planet_radius_meters: float,
+    ):
+        if not star or not body:
+            return
+
+        cos_lat = math.cos(math.radians(center.latitude))
+        deg_radius_sq = (radius_meters / planet_radius_meters) ** 2
+
+        sql = """    
+            UPDATE surface_spots    
+            SET last_visit_time = ?    
+            WHERE star_system = ? AND body_name = ?    
+                      AND (    
+                          (latitude - ?)**2 +    
+                          ((longitude - ?) * ?)**2 < ?    
+                      )    
+            ORDER BY (    
+                (latitude - ?)**2 +    
+                ((longitude - ?) * ?)**2    
+            ) ASC    
+            LIMIT 1  
+        """
+
+        params = (
+            DatabaseManager.now_utc(),  # SET last_visit_time
+            star,  # WHERE star_system
+            body,  # WHERE body_name
+            center.latitude,  # WHERE latitude
+            center.longitude,  # WHERE longitude
+            cos_lat,  # WHERE cos_lat
+            deg_radius_sq,  # WHERE radius_sq
+            center.latitude,  # ORDER BY lat
+            center.longitude,  # ORDER BY lon
+            cos_lat,  # ORDER BY cos_lat
+        )
+
+        try:
+            with self._get_connection() as conn:
+                conn.execute(sql, params)
+            # Let the transaction to finish!
+            dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
+        except sqlite3.Error as e:
+            logger.error(f"Database error during update_visit_time: {e}")
 
     def add_spot(self, spot: SurfaceSpot) -> bool:
         try:
@@ -111,7 +186,7 @@ class DatabaseManager:
                         spot.amount,
                         spot.density,
                         spot.max_miners,
-                        spot.last_visit_time,
+                        DatabaseManager.now_utc(),
                         spot.notes,
                     ),
                 )
@@ -131,7 +206,7 @@ class DatabaseManager:
                 )
             return success
         except sqlite3.Error as e:
-            print(f"Database error during add_spot: {e}")
+            logger.error(f"Database error during add_spot: {e}")
         return False
 
     @staticmethod
@@ -152,8 +227,8 @@ class DatabaseManager:
                         data["last_visit_time"] = datetime.datetime.fromisoformat(
                             data["last_visit_time"]
                         )
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Database error during _fetch_select_cursor: {e}")
             spots.append(SurfaceSpot(**data))
         return spots
 
@@ -194,7 +269,7 @@ class DatabaseManager:
             dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
             return True
         except sqlite3.Error as e:
-            print(f"Database error during update_spot: {e}")
+            logger.error(f"Database error during update_spot: {e}")
             return False
 
     def delete_spot(self, spot_id: int) -> bool:
@@ -206,7 +281,7 @@ class DatabaseManager:
             dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())
             return True
         except sqlite3.Error as e:
-            print(f"Database error during delete_spot: {e}")
+            logger.error(f"Database error during delete_spot: {e}")
             return False
 
     def find_by_mineral(self, mineral_type: str) -> list[SurfaceSpot]:
@@ -222,21 +297,3 @@ class DatabaseManager:
                 ),
             )
             return self._fetch_select_cursor(cursor)
-
-    def update_visit_time(
-        self, star_system: str, body_name: str, lat: float, lon: float
-    ):
-        import datetime
-
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                UPDATE surface_spots 
-                SET last_visit_time = ? 
-                WHERE star_system = ? AND body_name = ? AND latitude BETWEEN ? - 0.01 AND ? + 0.01 
-                  AND longitude BETWEEN ? - 0.01 AND ? + 0.01
-            """,
-                (datetime.datetime.now(), star_system, body_name, lat, lat, lon),
-            )
-        # Let the transaction to finish!
-        dispatcher.dispatch(KnownEvents.DATA_BASE_MODIFIED, EventParams())

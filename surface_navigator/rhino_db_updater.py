@@ -28,15 +28,30 @@ class RhinoMiningDbUpdater:
         # In any case, spot is seen and processed. Ignore more incoming events here.
         events_suppression_manager.set_exclusion_zone_at_srv_location()
 
-        spot = self._db_manager.find_incomplete_surface_mining_spot(
+        # Update time stamp if there is any spot here. SQL will handle closeness.
+        self._db_manager.update_visit_time(
+            star=loc.star_system,
+            body=loc.body_name,
             center=loc.srv_coord,
             radius_meters=events_suppression_manager.radius(),
             planet_radius_meters=loc.radius_meters or DEFAULT_PLANET_RADIUS,
         )
+
+        # Find spot MARK which is close enough to SRV and has EMPTY mineral type (not set)
+        #    -> most likely just mined belongs there.
+        spot = self._db_manager.find_incomplete_surface_mining_spot(
+            star=loc.star_system,
+            body=loc.body_name,
+            center=loc.srv_coord,
+            radius_meters=events_suppression_manager.radius(),
+            planet_radius_meters=loc.radius_meters or DEFAULT_PLANET_RADIUS,
+        )
+
         # Known spot at SRV location, probably pilot just returned from outside the planet or no mark was set here.
         if spot is None or spot.id is None:
             return
 
+        # Set just mined mineral as knowledge to DB.
         self._db_manager.update_spot(
             spot.id,
             mineral_type=data.params.get("mineral_db"),
