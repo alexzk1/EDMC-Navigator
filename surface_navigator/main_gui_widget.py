@@ -100,10 +100,13 @@ class MainGUIWidget(ttk.Frame):
             else:
                 messagebox.showwarning("Warning", "Please select a spot first.")
             return
-        vals = self._tree.item(selection[0], "values")
+        columns = self._tree["columns"]
+        values = self._tree.item(selection[0], "values")
+        row_dict = dict(zip(columns, values))
+
         try:
-            lat = float(vals[3])
-            lon = float(vals[4])
+            lat = float(row_dict["lat"])
+            lon = float(row_dict["lon"])
             self.overlay.navigate_to(SurfacePoint(lat, lon))
             if not self.overlay.is_navigating():
                 raise RuntimeError(
