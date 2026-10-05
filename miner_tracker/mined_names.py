@@ -19,7 +19,7 @@ class Commodities:
     user may enter whatever, this class helps to find exact name by catalogue.
     """
 
-    _SYMBOL_TO_MARKET_NAMES: dict[str, MarketName] = {}
+    _SYMBOL_TO_MARKET_NAMES: dict[str, MarketName] = {}  # noqa: RUF012
     _TEMPLATE_PATTERN = re.compile(r"^\$(\w+)_name;$")
     _LOADED: bool = False
 
