@@ -3,5 +3,6 @@
 set -e
 
 python3 -m py_compile surface_navigator/*.py
+#mypy --check-untyped-defs surface_navigator/
 pyflakes surface_navigator/*.py
 python3 -m pytest tests/

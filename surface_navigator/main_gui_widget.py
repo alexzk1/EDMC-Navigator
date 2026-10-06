@@ -103,7 +103,7 @@ class MainGUIWidget(ttk.Frame):
                 "",
                 tk.END,
                 values=(
-                    spot.mineral_type or spot.mineral_original or "-",
+                    (spot.mineral_type or spot.mineral_original or "-").capitalize(),
                     spot.body_name or "-",
                     spot.notes or "Unnamed Mark",
                     spot.max_miners,
