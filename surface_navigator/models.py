@@ -57,9 +57,13 @@ class StarSystem:
     updates, so they are optional.
     """
 
+    # Database id (key)
     star_id: int | None = None
+    # In-Game name
     star_name: str = ""
+    # Galaxy coordinates, probed from the servers, probably, could be computed from the systemid.
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    # In-game id (world key)
     systemid: int | None = None

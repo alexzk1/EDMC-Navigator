@@ -1,5 +1,6 @@
 from typing import Any, Protocol, runtime_checkable
 
+from .models import StarSystem
 from .player_location import PlayerLocation
 
 
@@ -11,9 +12,11 @@ class EventParams:
         self,
         params: dict[str, Any] | None = None,
         location: PlayerLocation | None = None,
+        system: StarSystem | None = None,
     ):
         self.params: dict[str, Any] = params or {}
         self.location = location
+        self.system = system
 
 
 @runtime_checkable
@@ -55,5 +58,5 @@ class KnownEvents:
     RHINO_MINING_DETECTED: str = "mining_record_detected"
     DATABASE_MODIFIED: str = "data_base_modified"
     # Provides valid location field (on body!) or None if location should be reset (player is not near the body).
-    # Params has string "system" which is current system once it is known or "".
+    # Provides system field, at least .star_name is set there.
     POSITION_UPDATED: str = "position_updated"

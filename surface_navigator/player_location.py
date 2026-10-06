@@ -1,6 +1,8 @@
 import math
 from dataclasses import dataclass
 
+from .models import StarSystem
+
 
 @dataclass(slots=True)
 class SurfacePoint:
@@ -17,7 +19,7 @@ DEFAULT_PLANET_RADIUS = 6371000.0
 class PlayerLocation:
     """Represent the player's transient spatial state."""
 
-    star_system: str
+    star_system: StarSystem
     body_name: str = ""
     # Latest known player coordinate.
     player_coord: SurfacePoint | None = None

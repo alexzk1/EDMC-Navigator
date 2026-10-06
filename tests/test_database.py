@@ -11,12 +11,13 @@ Every test DB is created in ``/tmp`` so the repo stays clean (see the
 import math
 import os
 import tempfile
+import time
 from collections.abc import Iterator
 
 import pytest
 
 from surface_navigator.database import DatabaseManager
-from surface_navigator.models import SurfaceSpot
+from surface_navigator.models import StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 
 
@@ -173,7 +174,7 @@ def test_get_system_spots(db: DatabaseManager):
 def test_get_planetary_spots(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
     db.add_spot(_spot("Alpha", "b2", 11.0, 21.0, "iron"))
-    loc = PlayerLocation(star_system="Alpha", body_name="b1")
+    loc = PlayerLocation(star_system=StarSystem(star_name="Alpha"), body_name="b1")
     assert len(db.get_planetary_spots(loc)) == 1
 
 
@@ -307,9 +308,16 @@ def test_delete_spot(db: DatabaseManager):
     assert db.get_system_spots("Beta") == []
 
 
-def test_update_visit_time_runs(db: DatabaseManager):
+def test_update_visit_time_advances(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
-    # Must not raise.
+
+    # Stored value comes back parsed from the ISO string we write.
+    before = db.get_system_spots("Alpha")[0].last_visit_time
+    assert before is not None
+
+    # Ensure real time has passed so the new timestamp actually differs.
+    time.sleep(2)
+
     db.update_visit_time(
         star="Alpha",
         body="b1",
@@ -317,7 +325,10 @@ def test_update_visit_time_runs(db: DatabaseManager):
         radius_meters=5000.0,
         planet_radius_meters=1000000.0,
     )
-    assert True
+
+    after = db.get_system_spots("Alpha")[0].last_visit_time
+    assert after is not None
+    assert after > before  # the value was genuinely updated, not just written
 
 
 # ---- star name uniqueness ----
@@ -347,6 +358,61 @@ def test_systemid_arriving_late_attaches_to_name_row(db: DatabaseManager):
         .fetchone()[0]
     )
     assert leftover == 0
+
+
+# ---- StarSystem partial updates (fill NULLs only) ----
+
+
+def test_starsystem_creates_with_all_fields(db: DatabaseManager):
+    sid = db._get_or_create_star(  # type: ignore
+        StarSystem(
+            star_name="Omega",
+            x=1.0,
+            y=2.0,
+            z=3.0,
+            systemid=42,
+        )
+    )
+    row = tuple(
+        db._get_connection()  # type: ignore
+        .execute(
+            "SELECT star_id, star_name, x, y, z, systemid FROM star_systems "
+            "WHERE star_name='Omega'"
+        )
+        .fetchone()
+    )
+    assert row == (sid, "Omega", 1.0, 2.0, 3.0, 42)
+
+
+def test_starsystem_fields_fill_nulls_later(db: DatabaseManager):
+    # First arrival: only the name is known.
+    first = db._get_or_create_star(StarSystem(star_name="Omega"))  # type: ignore
+    # Second arrival: coordinates arrive late, systemid still unknown.
+    second = db._get_or_create_star(StarSystem(star_name="Omega", x=1.0, y=2.0, z=3.0))  # type: ignore
+    assert first == second
+    row = tuple(
+        db._get_connection()  # type: ignore
+        .execute("SELECT x, y, z, systemid FROM star_systems WHERE star_name='Omega'")
+        .fetchone()
+    )
+    assert row == (1.0, 2.0, 3.0, None)
+
+
+def test_starsystem_does_not_overwrite_existing_values(db: DatabaseManager):
+    # A complete row arrives first.
+    first = db._get_or_create_star(  # type: ignore
+        StarSystem(star_name="Omega", x=1.0, y=2.0, z=3.0, systemid=42)
+    )
+    # A partial update arrives later with conflicting values.
+    db._get_or_create_star(StarSystem(star_name="Omega", x=99.0, y=99.0, z=99.0))  # type: ignore
+    assert first == db._get_or_create_star(StarSystem(star_name="Omega"))  # type: ignore
+    row = tuple(
+        db._get_connection()  # type: ignore
+        .execute("SELECT x, y, z, systemid FROM star_systems WHERE star_name='Omega'")
+        .fetchone()
+    )
+    # Original values are preserved; the partial update is ignored.
+    assert row == (1.0, 2.0, 3.0, 42)
 
 
 def test_cascade_delete_star(db: DatabaseManager):

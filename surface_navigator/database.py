@@ -4,7 +4,7 @@ import sqlite3
 from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .models import SurfaceSpot
+from .models import StarSystem, SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
 
 logger = logging.getLogger("SurfaceNavigator")
@@ -33,10 +33,19 @@ class DatabaseManager:
         return conn
 
     @staticmethod
-    def now_utc():
+    def _now_utc() -> str:
+        """Returns the current UTC time as an ISO-8601 string, ready to store.
+
+        Callers just use this value directly in an ``INSERT``/``UPDATE`` without
+        any extra formatting. It is returned as a plain string (not a
+        ``datetime``) so the write path never touches sqlite3's datetime
+        adapters, which are deprecated in Python 3.12+. ``fromisoformat`` on the
+        read path parses both this ``T``-separated format and the older
+        space-separated one, so existing databases need no migration.
+        """
         import datetime
 
-        return datetime.datetime.now(datetime.timezone.utc)
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     def _init_db(self):
         with self._get_connection() as conn:
@@ -90,36 +99,67 @@ class DatabaseManager:
                WHERE mineral_type IS NULL AND mineral_original IS NULL;
             """)
 
-    def _get_or_create_star(self, star_name: str, systemid: int | None = None) -> int:
+    def _get_or_create_star(
+        self, star_name: str | StarSystem, systemid: int | None = None
+    ) -> int:
         """Returns the star_id for ``star_name``, creating the row if needed.
 
         Star names are unique, so a single lookup by name is enough. When a
-        ``systemid`` is known but the existing row still holds a NULL one (e.g.
-        it arrived late via a streaming update), it is attached to that row
-        instead of creating a duplicate.
+        ``StarSystem`` (or a plain ``systemid``) is known but the existing row
+        still holds NULLs for ``systemid``/coordinates, those values are
+        attached to that row instead of creating a duplicate.
+
+        Fields are populated lazily: a value is only written into an existing
+        row when that row's column is still NULL. Existing values are never
+        overwritten, so partial updates that arrive at different times compose
+        cleanly.
         """
+        if isinstance(star_name, StarSystem):
+            name = star_name.star_name
+            systemid = systemid if systemid is not None else star_name.systemid
+            x, y, z = star_name.x, star_name.y, star_name.z
+        else:
+            name = star_name
+            x = y = z = None
+
         with self._get_connection() as conn:
             cur = conn.execute(
-                "SELECT star_id, systemid FROM star_systems WHERE star_name = ?",
-                (star_name,),
+                "SELECT star_id, systemid, x, y, z FROM star_systems "
+                "WHERE star_name = ?",
+                (name,),
             )
             row = cur.fetchone()
             if row is not None:
-                existing_id, existing_sid = row
+                existing_id, existing_sid, ex_x, ex_y, ex_z = row
+                updates: dict[str, object] = {}
                 if systemid is not None and existing_sid is None:
+                    updates["systemid"] = systemid
+                if x is not None and ex_x is None:
+                    updates["x"] = x
+                if y is not None and ex_y is None:
+                    updates["y"] = y
+                if z is not None and ex_z is None:
+                    updates["z"] = z
+                if updates:
+                    set_clause = ", ".join(f"{col} = ?" for col in updates)
                     conn.execute(
-                        "UPDATE star_systems SET systemid = ? WHERE star_id = ?",
-                        (systemid, existing_id),
+                        f"UPDATE star_systems SET {set_clause} WHERE star_id = ?",
+                        (*updates.values(), existing_id),
                     )
                 return existing_id
 
             cur = conn.execute(
-                "INSERT INTO star_systems (star_name, systemid) VALUES (?, ?)",
-                (star_name, systemid),
+                "INSERT INTO star_systems (star_name, systemid, x, y, z) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, systemid, x, y, z),
             )
             star_id = cur.lastrowid
             assert star_id is not None  # a successful INSERT always sets lastrowid
             return star_id
+
+    def ensure_star_exists(self, system: StarSystem) -> int:
+        system.star_id = self._get_or_create_star(system)
+        return system.star_id
 
     def find_incomplete_surface_mining_spot(
         self,
@@ -238,7 +278,7 @@ class DatabaseManager:
                     # Step 2: Update that specific ID
                     conn.execute(
                         "UPDATE surface_spots SET last_visit_time = ? WHERE id = ?",
-                        (DatabaseManager.now_utc(), target_id),
+                        (DatabaseManager._now_utc(), target_id),
                     )
 
             # Let the transaction to finish!
@@ -269,7 +309,7 @@ class DatabaseManager:
                         spot.amount,
                         spot.density,
                         spot.max_miners,
-                        DatabaseManager.now_utc(),
+                        DatabaseManager._now_utc(),
                         spot.notes,
                     ),
                 )
@@ -334,19 +374,22 @@ class DatabaseManager:
             return DatabaseManager._fetch_select_cursor(
                 conn.execute(
                     f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE star_systems.star_name = ? AND body_name = ?",
-                    (location.star_system, location.body_name),
+                    (location.star_system.star_name, location.body_name),
                 )
             )
 
-    def get_system_spots(self, system: str) -> list[SurfaceSpot]:
+    def get_system_spots(self, system: str | StarSystem | None) -> list[SurfaceSpot]:
         """Fetches records for the current planet if any."""
-        if not system:
+        if system is None:
+            return []
+        star = system if isinstance(system, str) else system.star_name
+        if not star:
             return []
         with self._get_connection() as conn:
             return DatabaseManager._fetch_select_cursor(
                 conn.execute(
                     f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE star_systems.star_name = ?",
-                    (system,),
+                    (star,),
                 )
             )
 

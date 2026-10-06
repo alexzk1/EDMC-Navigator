@@ -18,6 +18,7 @@ class AddSpotDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("Add Spot...")
         self.db_manager = db_manager
+        self.current_location = current_location
 
         window_width = 400
         window_height = 550
@@ -54,7 +55,9 @@ class AddSpotDialog(tk.Toplevel):
         # Auto-populate from current location
         if current_location:
             if current_location.star_system:
-                self.entries["system"].insert(0, str(current_location.star_system))
+                self.entries["system"].insert(
+                    0, str(current_location.star_system.star_name)
+                )
                 self.entries["system"].config(state="disabled")
             if current_location.body_name:
                 self.entries["body"].insert(0, str(current_location.body_name))
@@ -134,6 +137,12 @@ class AddSpotDialog(tk.Toplevel):
                 max_miners=rigs_count,
             )
             if spot.star_system and spot.body_name:
+                # If we have StarSystem data passed, then use it as a whole to create / update star record.
+                if self.current_location is not None:
+                    self.db_manager.ensure_star_exists(
+                        self.current_location.star_system
+                    )
+                # And then standard query with start string name only (probably manually entered).
                 if self.db_manager.add_spot(spot):
                     self.destroy()
                 else:

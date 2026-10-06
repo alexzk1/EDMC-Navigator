@@ -5,6 +5,7 @@ from typing import Any
 from .add_spot_dialog import AddSpotDialog
 from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
+from .models import StarSystem
 from .overlay_client import OverlayClient
 from .player_location import PlayerLocation, SurfacePoint
 
@@ -18,7 +19,7 @@ class MainGUIWidget(ttk.Frame):
         self.db_manager = db_manager
         self.overlay = overlay_client
         self.current_location: PlayerLocation | None = None
-        self.current_system = ""
+        self.current_system: StarSystem | None = None
 
         self._setup_ui()
         self._load_data()
@@ -163,12 +164,12 @@ class MainGUIWidget(ttk.Frame):
             data.location is None
         ) or not self.current_system
         self.current_location = data.location
-        self.current_system = data.params.get("system", "")
+        self.current_system = data.system
         body = ""
         if self.current_location is not None:
             self.current_system = self.current_location.star_system
             body = (
-                self.current_location.star_system
+                self.current_location.star_system.star_name
                 + " "
                 + self.current_location.body_name
             )

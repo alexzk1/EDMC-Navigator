@@ -9,6 +9,7 @@ try:
     from .events_dispatcher import EventParams, KnownEvents, dispatcher
     from .main_gui_widget import MainGUIWidget
     from .mining_event_detector import RhinoMiningEventDetector
+    from .models import StarSystem
     from .overlay_client import OverlayClient, OverlayTextConf
     from .player_location import PlayerLocation, SurfacePoint
     from .rhino_db_updater import RhinoMiningDbUpdater
@@ -24,6 +25,7 @@ except ImportError:
     from events_dispatcher import EventParams, KnownEvents, dispatcher
     from main_gui_widget import MainGUIWidget
     from mining_event_detector import RhinoMiningEventDetector
+    from models import StarSystem
     from overlay_client import OverlayClient, OverlayTextConf
     from player_location import PlayerLocation, SurfacePoint
     from rhino_db_updater import RhinoMiningDbUpdater
@@ -47,7 +49,7 @@ class SurfaceNavigatorPlugin:
 
         # Current game state tracking
         self.current_location: PlayerLocation | None = None
-        self.last_system: str = ""
+        self.last_system: StarSystem = StarSystem(star_name="")
 
     def handle_journal_event(
         self,
@@ -59,8 +61,18 @@ class SurfaceNavigatorPlugin:
         state: MutableMapping[str, Any],
     ):
         """Called by EDMC when a journal event occurs."""
-        system_changed: bool = system != self.last_system
-        self.last_system = system
+        system_changed: bool = system != self.last_system.star_name
+        if system_changed:
+            self.current_location = None
+            self.last_system = StarSystem(star_name=system)
+
+        if self.last_system.systemid is None:
+            addr: int | None = entry.get("SystemAddress")
+            if addr is not None:
+                self.last_system.systemid = addr
+                # Trigger updated as we just updated Address
+                system_changed = True
+
         if self._extract_location_from_journal(system, entry, state) or system_changed:
             self._emit_location()
         self._mining_detector.handle_journal_entry(
@@ -113,7 +125,7 @@ class SurfaceNavigatorPlugin:
         old_location = (
             self.current_location
             if self.current_location
-            else PlayerLocation(star_system=system)
+            else PlayerLocation(star_system=self.last_system)
         )
         old_body = old_location.body_name
         new_body = self._clean_body_name(system, dirty_new_body)
@@ -166,7 +178,7 @@ class SurfaceNavigatorPlugin:
         if flew_to_other_body or not self.current_location:
             final_body_name = new_body or str(old_body or "")
             self.current_location = PlayerLocation(
-                star_system=system,
+                star_system=self.last_system,
                 body_name=final_body_name,
                 player_coord=new_point,
             )
@@ -191,7 +203,7 @@ class SurfaceNavigatorPlugin:
             return False
 
         status_body = self._clean_body_name(
-            self.current_location.star_system,
+            self.current_location.star_system.star_name,
             entry.get("BodyName") or self.current_location.body_name,
         )
 
@@ -245,7 +257,8 @@ class SurfaceNavigatorPlugin:
         dispatcher.dispatch(
             KnownEvents.POSITION_UPDATED,
             EventParams(
-                params={"system": self.last_system}, location=self.current_location
+                system=self.last_system,
+                location=self.current_location,
             ),
         )
 
