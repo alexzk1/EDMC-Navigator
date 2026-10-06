@@ -163,7 +163,7 @@ class DatabaseManager:
 
     def find_incomplete_surface_mining_spot(
         self,
-        star: str,
+        star: str | StarSystem,
         body: str,
         center: SurfacePoint,
         radius_meters: float,
@@ -173,8 +173,11 @@ class DatabaseManager:
         Finds single mining spot around the center in radius which does not have mined mineral set in DB.
         Radius must be small enough to assume surface is flat.
         """
-
-        if not star or not body:
+        if isinstance(star, StarSystem):
+            star_name_to_use = star.star_name
+        else:
+            star_name_to_use = star
+        if not star_name_to_use or not body:
             return None
 
         lat_rad = math.radians(center.latitude)
@@ -199,7 +202,7 @@ class DatabaseManager:
             LIMIT 1
         """
         params = (
-            star,
+            star_name_to_use,
             body,
             center.latitude,  # WHERE lat1
             center.latitude,  # WHERE lat2
@@ -222,13 +225,17 @@ class DatabaseManager:
 
     def update_visit_time(
         self,
-        star: str,
+        star: str | StarSystem,
         body: str,
         center: SurfacePoint,
         radius_meters: float,
         planet_radius_meters: float,
     ):
-        if not star or not body:
+        if isinstance(star, StarSystem):
+            star_name_to_use = star.star_name
+        else:
+            star_name_to_use = star
+        if not star_name_to_use or not body:
             return
 
         lat_rad = math.radians(center.latitude)
@@ -254,7 +261,7 @@ class DatabaseManager:
         """
 
         params = (
-            star,  # WHERE star_systems.star_name
+            star_name_to_use,  # WHERE star_systems.star_name
             body,  # WHERE body_name
             center.latitude,  # WHERE lat1
             center.latitude,  # WHERE lat2
