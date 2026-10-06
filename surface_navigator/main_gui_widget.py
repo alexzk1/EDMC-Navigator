@@ -122,6 +122,15 @@ class MainGUIWidget(ttk.Frame):
             else:
                 messagebox.showwarning("Warning", "Please select a spot first.")
             return
+
+        if self.current_location is None:
+            self.overlay.navigate_to(None)
+            messagebox.showwarning(
+                "Navigation Error",
+                "Cannot navigate to system markers. Please approach a body first.",
+            )
+            return
+
         columns = self._tree["columns"]
         values = self._tree.item(selection[0], "values")
         row_dict = dict(zip(columns, values))
