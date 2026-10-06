@@ -274,6 +274,18 @@ class DatabaseManager:
                 )
             )
 
+    def get_system_spots(self, system: str) -> list[SurfaceSpot]:
+        """Fetches records for the current planet if any."""
+        if not system:
+            return []
+        with self._get_connection() as conn:
+            return DatabaseManager._fetch_select_cursor(
+                conn.execute(
+                    "SELECT * FROM surface_spots WHERE star_system = ?",
+                    (system,),
+                )
+            )
+
     def update_spot(self, spot_id: int, **kwargs: Any) -> bool:
         if not kwargs:
             return False
