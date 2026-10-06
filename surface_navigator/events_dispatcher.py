@@ -54,5 +54,6 @@ dispatcher = EventDispatcher()
 class KnownEvents:
     RHINO_MINING_DETECTED: str = "mining_record_detected"
     DATABASE_MODIFIED: str = "data_base_modified"
-    # Provides valid location field.
+    # Provides valid location field (on body!) or None if location should be reset (player is not near the body).
+    # Params has string "system" which is current system once it is known or "".
     POSITION_UPDATED: str = "position_updated"

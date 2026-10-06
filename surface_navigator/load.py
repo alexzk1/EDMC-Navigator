@@ -47,6 +47,7 @@ class SurfaceNavigatorPlugin:
 
         # Current game state tracking
         self.current_location: PlayerLocation | None = None
+        self.last_system: str = ""
 
     def handle_journal_event(
         self,
@@ -58,8 +59,9 @@ class SurfaceNavigatorPlugin:
         state: MutableMapping[str, Any],
     ):
         """Called by EDMC when a journal event occurs."""
-
-        if self._extract_location_from_journal(system, entry, state):
+        system_changed: bool = system != self.last_system
+        self.last_system = system
+        if self._extract_location_from_journal(system, entry, state) or system_changed:
             self._emit_location()
         self._mining_detector.handle_journal_entry(
             cmdr, is_beta, system, station, entry, state
@@ -241,7 +243,10 @@ class SurfaceNavigatorPlugin:
 
     def _emit_location(self):
         dispatcher.dispatch(
-            KnownEvents.POSITION_UPDATED, EventParams(location=self.current_location)
+            KnownEvents.POSITION_UPDATED,
+            EventParams(
+                params={"system": self.last_system}, location=self.current_location
+            ),
         )
 
     def create_gui(self, parent: Any) -> MainGUIWidget | None:
