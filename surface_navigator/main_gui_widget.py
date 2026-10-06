@@ -18,6 +18,7 @@ class MainGUIWidget(ttk.Frame):
         self.db_manager = db_manager
         self.overlay = overlay_client
         self.current_location: PlayerLocation | None = None
+        self.current_system = ""
 
         self._setup_ui()
         self._load_data()
@@ -52,7 +53,7 @@ class MainGUIWidget(ttk.Frame):
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("mineral", "note", "rigs", "nav", "lat", "lon", "db_id")
+        columns = ("mineral", "body", "note", "rigs", "nav", "lat", "lon", "db_id")
         self._tree = ttk.Treeview(
             tree_container, columns=columns, show="headings", height=8
         )
@@ -62,13 +63,13 @@ class MainGUIWidget(ttk.Frame):
                 self._tree.heading(col, text="")
             else:
                 width = 70
-                if col in ["note"]:
+                if col == "note":
                     width = 120
                 if col in ["rigs", "nav"]:
                     width = 20
                 self._tree.column(col, width=width)
                 self._tree.heading(col, text=col.capitalize())
-
+        self._show_hide_body(False)
         scrollbar = ttk.Scrollbar(
             tree_container,
             orient="vertical",
@@ -79,15 +80,30 @@ class MainGUIWidget(ttk.Frame):
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def _show_hide_body(self, show: bool):
+        if show:
+            self._tree.column("body", width=20, stretch=True)
+            self._tree.heading("body", text="Body")
+        else:
+            self._tree.column("body", width=0, stretch=False)
+            self._tree.heading("body", text="")
+
     def _load_data(self):
         for item in self._tree.get_children():
             self._tree.delete(item)
-        for spot in self.db_manager.get_planetary_spots(self.current_location):
+        spots = (
+            self.db_manager.get_system_spots(self.current_system)
+            if self.current_location is None
+            else self.db_manager.get_planetary_spots(self.current_location)
+        )
+
+        for spot in spots:
             self._tree.insert(
                 "",
                 tk.END,
                 values=(
                     spot.mineral_type or spot.mineral_original or "-",
+                    spot.body_name or "-",
                     spot.notes or "Unnamed Mark",
                     spot.max_miners,
                     spot.spot_number or "-",
@@ -134,14 +150,25 @@ class MainGUIWidget(ttk.Frame):
 
     def _set_current_location(self, data: EventParams):
         """Update the GUI's knowledge of where we are and whether we are on surface."""
+        need_switch: bool = (self.current_location is None) != (
+            data.location is None
+        ) or not self.current_system
         self.current_location = data.location
+        self.current_system = data.params.get("system", "")
         body = ""
         if self.current_location is not None:
+            self.current_system = self.current_location.star_system
             body = (
                 self.current_location.star_system
                 + " "
                 + self.current_location.body_name
             )
+        need_refresh = False
+        if need_switch:
+            need_refresh = True
+            self._show_hide_body(show=self.current_location is None)
         if body != self.last_known_full_body:
             self.last_known_full_body = body
+            need_refresh = True
+        if need_refresh:
             self._refresh()
