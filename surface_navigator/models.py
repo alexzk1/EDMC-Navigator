@@ -45,3 +45,21 @@ class SurfaceSpot:
         if dt and isinstance(dt, str):
             data["last_visit_time"] = datetime.datetime.fromisoformat(dt)
         return cls(**data)
+
+
+@dataclass
+class StarSystem:
+    """Represents a row in the dedicated ``star_systems`` table.
+
+    Star names are unique in practice, but a handful of systems share a name and
+    are only distinguished by ``systemid``. ``systemid`` (and the x/y/z
+    coordinates) may be unknown at first and arrive later via streaming
+    updates, so they are optional.
+    """
+
+    star_id: int | None = None
+    star_name: str = ""
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    systemid: int | None = None

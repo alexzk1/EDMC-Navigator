@@ -9,6 +9,16 @@ from .player_location import PlayerLocation, SurfacePoint
 
 logger = logging.getLogger("SurfaceNavigator")
 
+# Surface spots live in their own table but reference a normalized
+# ``star_systems`` table via ``star_id``. Every read reconstructs the
+# (historically flat) ``star_system`` string through this JOIN so the rest of
+# the app keeps working with ``SurfaceSpot.star_system`` unchanged.
+_SPOTS_SELECT_LIST = "surface_spots.*, star_systems.star_name AS star_system"
+_SPOTS_FROM = (
+    "FROM surface_spots "
+    "JOIN star_systems ON surface_spots.star_id = star_systems.star_id"
+)
+
 
 class DatabaseManager:
     def __init__(self, db_path: str):
@@ -17,7 +27,9 @@ class DatabaseManager:
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key support
         conn.row_factory = sqlite3.Row
+
         return conn
 
     @staticmethod
@@ -28,10 +40,26 @@ class DatabaseManager:
 
     def _init_db(self):
         with self._get_connection() as conn:
+            # Normalized star systems. Names are unique in practice, but a few
+            # systems share a name and are only distinguished by ``systemid``;
+            # hence there is no UNIQUE constraint. ``systemid`` and x/y/z are
+            # optional because they may arrive later via streaming updates.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS star_systems (
+                    star_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    star_name TEXT NOT NULL UNIQUE,
+                    x REAL,
+                    y REAL,
+                    z REAL,
+                    systemid INTEGER
+                )
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS surface_spots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    star_system TEXT NOT NULL,
+                    star_id INTEGER NOT NULL
+                        REFERENCES star_systems(star_id)
+                        ON DELETE CASCADE,
                     body_name TEXT NOT NULL,
                     latitude REAL NOT NULL,
                     longitude REAL NOT NULL,
@@ -46,7 +74,7 @@ class DatabaseManager:
                 )
             """)
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_spots_location ON surface_spots (star_system, body_name)"
+                "CREATE INDEX IF NOT EXISTS idx_spots_location ON surface_spots (star_id, body_name)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_spots_coords ON surface_spots (latitude, longitude)"
@@ -57,10 +85,41 @@ class DatabaseManager:
                 WHERE mineral_type IS NULL AND mineral_original IS NULL
             """)
             conn.execute("""
-               CREATE INDEX IF NOT EXISTS idx_incomplete_mining_spots  
-               ON surface_spots (star_system, body_name, latitude, longitude)  
+               CREATE INDEX IF NOT EXISTS idx_incomplete_mining_spots_system  
+               ON surface_spots (star_id, body_name, latitude, longitude)  
                WHERE mineral_type IS NULL AND mineral_original IS NULL;
             """)
+
+    def _get_or_create_star(self, star_name: str, systemid: int | None = None) -> int:
+        """Returns the star_id for ``star_name``, creating the row if needed.
+
+        Star names are unique, so a single lookup by name is enough. When a
+        ``systemid`` is known but the existing row still holds a NULL one (e.g.
+        it arrived late via a streaming update), it is attached to that row
+        instead of creating a duplicate.
+        """
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "SELECT star_id, systemid FROM star_systems WHERE star_name = ?",
+                (star_name,),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                existing_id, existing_sid = row
+                if systemid is not None and existing_sid is None:
+                    conn.execute(
+                        "UPDATE star_systems SET systemid = ? WHERE star_id = ?",
+                        (systemid, existing_id),
+                    )
+                return existing_id
+
+            cur = conn.execute(
+                "INSERT INTO star_systems (star_name, systemid) VALUES (?, ?)",
+                (star_name, systemid),
+            )
+            star_id = cur.lastrowid
+            assert star_id is not None  # a successful INSERT always sets lastrowid
+            return star_id
 
     def find_incomplete_surface_mining_spot(
         self,
@@ -84,12 +143,11 @@ class DatabaseManager:
         deg_ratio = (radius_meters / planet_radius_meters) * (180 / math.pi)
         deg_radius_sq = deg_ratio**2
 
-        sql = """  
-            SELECT *  
-            FROM surface_spots  
+        sql = f"""  
+            SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM}
             WHERE mineral_type IS NULL  
                 AND mineral_original IS NULL  
-                AND star_system = ? AND body_name = ?
+                AND star_systems.star_name = ? AND body_name = ?
                 AND (      
                     (latitude - ?) * (latitude - ?) +   
                     (longitude - ?) * (longitude - ?) * ?
@@ -140,9 +198,10 @@ class DatabaseManager:
         deg_ratio = (radius_meters / planet_radius_meters) * (180 / math.pi)
         deg_radius_sq = deg_ratio**2
 
-        sql = """    
-            SELECT id FROM surface_spots                        
-            WHERE star_system = ? AND body_name = ?      
+        sql = f"""    
+            SELECT surface_spots.id 
+            {_SPOTS_FROM}
+            WHERE star_systems.star_name = ? AND body_name = ?      
                       AND (      
                           (latitude - ?) * (latitude - ?) +   
                           (longitude - ?) * (longitude - ?) * ?
@@ -155,7 +214,7 @@ class DatabaseManager:
         """
 
         params = (
-            star,  # WHERE star_system
+            star,  # WHERE star_systems.star_name
             body,  # WHERE body_name
             center.latitude,  # WHERE lat1
             center.latitude,  # WHERE lat2
@@ -191,15 +250,16 @@ class DatabaseManager:
         try:
             success: bool = False
             with self._get_connection() as conn:
+                star_id = self._get_or_create_star(spot.star_system)
                 cursor = conn.execute(
                     """
                     INSERT INTO surface_spots (
-                        star_system, body_name, latitude, longitude, 
+                        star_id, body_name, latitude, longitude, 
                         spot_number, mineral_type, mineral_original, amount, density, max_miners, last_visit_time, notes
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
-                        spot.star_system,
+                        star_id,
                         spot.body_name,
                         spot.latitude,
                         spot.longitude,
@@ -238,6 +298,10 @@ class DatabaseManager:
         spots: list[SurfaceSpot] = []
         for row in cursor:
             data = dict(row)
+            # surface_spots.star_id is an internal FK; the star name is
+            # reconstructed by the JOIN in every query. SurfaceSpot keeps its
+            # historical star_system field.
+            data.pop("star_id", None)
             # SQLite might return timestamp as string or datetime depending on driver/version
             if data["last_visit_time"] and not (
                 data["last_visit_time"] is None
@@ -259,7 +323,7 @@ class DatabaseManager:
         """Fetches ALL records from DB. Warning! It can explode things."""
         with self._get_connection() as conn:
             return DatabaseManager._fetch_select_cursor(
-                conn.execute("SELECT * FROM surface_spots")
+                conn.execute(f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM}")
             )
 
     def get_planetary_spots(self, location: PlayerLocation | None) -> list[SurfaceSpot]:
@@ -269,7 +333,7 @@ class DatabaseManager:
         with self._get_connection() as conn:
             return DatabaseManager._fetch_select_cursor(
                 conn.execute(
-                    "SELECT * FROM surface_spots WHERE star_system = ? AND body_name = ?",
+                    f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE star_systems.star_name = ? AND body_name = ?",
                     (location.star_system, location.body_name),
                 )
             )
@@ -281,7 +345,7 @@ class DatabaseManager:
         with self._get_connection() as conn:
             return DatabaseManager._fetch_select_cursor(
                 conn.execute(
-                    "SELECT * FROM surface_spots WHERE star_system = ?",
+                    f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE star_systems.star_name = ?",
                     (system,),
                 )
             )
@@ -322,7 +386,7 @@ class DatabaseManager:
         to_find = f"%{mineral_type}%"
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT * FROM surface_spots WHERE mineral_type LIKE ? OR mineral_original LIKE ?",
+                f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE mineral_type LIKE ? OR mineral_original LIKE ?",
                 (
                     to_find,
                     to_find,
