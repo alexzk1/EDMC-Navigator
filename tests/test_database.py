@@ -19,6 +19,7 @@ import pytest
 from surface_navigator.database import DatabaseManager
 from surface_navigator.models import StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
+from surface_navigator.spot_flags import SurfaceSpotFlags
 
 
 @pytest.fixture()
@@ -134,6 +135,51 @@ def test_incomplete_mining_indexes_are_distinct(db: DatabaseManager):
         for r in conn.execute("PRAGMA index_info(idx_incomplete_mining_spots_system)")
     }
     assert system_cols == {"star_id", "body_name", "latitude", "longitude"}
+
+
+def test_surface_spots_has_flags_column(db: DatabaseManager):
+    """The bit-field column exists, is NOT NULL and defaults to 0."""
+    conn = db._get_connection()  # type: ignore
+    info = {r[1]: r for r in conn.execute("PRAGMA table_info(surface_spots)")}
+    assert "flags" in info
+    col = info["flags"]
+    assert col[3] == 1  # notnull
+    assert col[4] == "0"  # default value
+
+
+# ---- flags bit-field ----
+
+
+def test_flags_default_to_zero(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    spot = db.get_system_spots("Alpha")[0]
+    assert spot.flags == SurfaceSpotFlags(0)
+    assert spot.flags.value == 0
+
+
+def test_flags_set_and_read_back(db: DatabaseManager):
+    """A flag set through ``update_spot`` is read back as the Flag enum."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    spot = db.get_system_spots("Alpha")[0]
+    assert spot.id is not None
+    assert db.update_spot(spot.id, flags=SurfaceSpotFlags.IS_TEMPORARY_MARK.value) is True
+
+    reloaded = db.get_system_spots("Alpha")[0]
+    assert reloaded.flags.value == SurfaceSpotFlags.IS_TEMPORARY_MARK.value
+    assert SurfaceSpotFlags.IS_TEMPORARY_MARK in reloaded.flags
+
+
+def test_flags_coerced_from_int_in_model():
+    # The DB hands back a plain int; the model must normalise it to the enum.
+    flag_val = SurfaceSpotFlags.IS_TEMPORARY_MARK.value
+    spot = SurfaceSpot(flags=flag_val)
+    assert isinstance(spot.flags, SurfaceSpotFlags)
+    assert spot.flags.value == flag_val
+
+
+def test_flags_to_dict_roundtrip():
+    spot = SurfaceSpot(flags=SurfaceSpotFlags.IS_TEMPORARY_MARK)
+    assert spot.to_dict()["flags"] == SurfaceSpotFlags.IS_TEMPORARY_MARK.value
 
 
 # ---- round trip ----

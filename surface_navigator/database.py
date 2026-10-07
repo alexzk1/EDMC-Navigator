@@ -79,7 +79,8 @@ class DatabaseManager:
                     density REAL,
                     max_miners INTEGER DEFAULT 1,
                     last_visit_time TIMESTAMP,
-                    notes TEXT
+                    notes TEXT,
+                    flags INTEGER NOT NULL DEFAULT 0
                 )
             """)
             conn.execute(
@@ -302,8 +303,8 @@ class DatabaseManager:
                     """
                     INSERT INTO surface_spots (
                         star_id, body_name, latitude, longitude, 
-                        spot_number, mineral_type, mineral_original, amount, density, max_miners, last_visit_time, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        spot_number, mineral_type, mineral_original, amount, density, max_miners, last_visit_time, notes, flags
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         star_id,
@@ -318,6 +319,7 @@ class DatabaseManager:
                         spot.max_miners,
                         DatabaseManager._now_utc(),
                         spot.notes,
+                        spot.flags.value,
                     ),
                 )
                 success = cursor.lastrowid is not None

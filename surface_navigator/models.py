@@ -2,6 +2,8 @@ import datetime
 from dataclasses import dataclass
 from typing import Any
 
+from .spot_flags import SurfaceSpotFlags
+
 
 @dataclass
 class SurfaceSpot:
@@ -20,6 +22,16 @@ class SurfaceSpot:
     max_miners: int = 1
     last_visit_time: datetime.datetime | None = None
     notes: str | None = None
+    # Bit-field of SurfaceSpotFlags. Stored as INTEGER in the DB; defaults to 0
+    # (no flags). ``__post_init__`` normalises the plain int the DB returns into
+    # a SurfaceSpotFlags so callers can test membership directly.
+    flags: SurfaceSpotFlags = SurfaceSpotFlags(0)
+
+    def __post_init__(self) -> None:
+        # The DB stores flags as a plain INTEGER; coerce so callers always get a
+        # SurfaceSpotFlags they can query with ``IS_TEMPORARY_MARK in self.flags``.
+        if not isinstance(self.flags, SurfaceSpotFlags):
+            self.flags = SurfaceSpotFlags(int(self.flags))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -37,6 +49,7 @@ class SurfaceSpot:
             if self.last_visit_time
             else None,
             "notes": self.notes,
+            "flags": self.flags.value,
         }
 
     @classmethod
