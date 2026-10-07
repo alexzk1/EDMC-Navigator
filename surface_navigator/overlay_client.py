@@ -1,8 +1,15 @@
 import logging
-from dataclasses import dataclass
 from enum import Enum, auto
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
+from .nav_config import (
+    MESSAGE_ID as CONFIG_MESSAGE_ID,
+)
+from .nav_config import (
+    NAVIGATION_THRESHOLD_METERS,
+    OVERLAY_TEXT_TIMEOUT_SEC,
+    OverlayTextConf,
+)
 from .player_location import (
     DEFAULT_PLANET_RADIUS,
     NavigationUtils,
@@ -21,15 +28,6 @@ except ImportError:
 logger = logging.getLogger("SurfaceNavigator")
 
 
-@dataclass(slots=True)
-class OverlayTextConf:
-    left: int = 10
-    top: int = 320
-    color: str = "#62FF00"
-    color_reached: str = "#FF0000"
-    size: str = "normal"
-
-
 class NavigationStatus(Enum):
     """Navigation statuses"""
 
@@ -42,8 +40,8 @@ class OverlayClient:
 
     # Timeout should be long enough to cover log update to avoid flickering,
     # and it should be short enough to avoid annoyance.
-    TEXT_TIMEOUT_SEC: int = 10
-    MESSAGE_ID = "navigator_message"
+    TEXT_TIMEOUT_SEC: int = OVERLAY_TEXT_TIMEOUT_SEC
+    MESSAGE_ID = CONFIG_MESSAGE_ID
 
     def __init__(self, conf: OverlayTextConf):
         self._config = conf
@@ -129,7 +127,7 @@ class OverlayClient:
 
     @staticmethod
     def _get_navigation_status(dist: float) -> NavigationStatus:
-        THRESHOLD_METERS = 10.0
+        THRESHOLD_METERS = NAVIGATION_THRESHOLD_METERS
         if dist < THRESHOLD_METERS:
             return NavigationStatus.REACHED
         else:

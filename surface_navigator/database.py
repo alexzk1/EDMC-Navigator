@@ -6,6 +6,7 @@ from typing import Any
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import StarSystem, SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
+from .spot_flags import SurfaceSpotFlags
 
 logger = logging.getLogger("SurfaceNavigator")
 
@@ -432,6 +433,45 @@ class DatabaseManager:
         except sqlite3.Error as e:
             logger.error(f"Database error during delete_spot: {e}")
             return False
+
+    def gc_temporaries(self, age_secs: int) -> int:
+        """Removes temporary marks older than ``age_secs`` seconds.
+
+        A spot is "temporary" when the ``IS_TEMPORARY_MARK`` bit is set in its
+        ``flags``. Age is measured from ``last_visit_time`` against now (UTC).
+        Rows with a NULL ``last_visit_time`` are kept -- their age is unknown.
+
+        Returns the number of deleted rows.
+        """
+        import datetime
+
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(seconds=age_secs)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM surface_spots
+                    WHERE (flags & ?) != 0
+                      AND last_visit_time IS NOT NULL
+                      AND datetime(last_visit_time) < ?
+                    """,
+                    (SurfaceSpotFlags.IS_TEMPORARY_MARK.value, cutoff),
+                )
+                deleted = cursor.rowcount
+
+            # Let the transaction to finish!
+            dispatcher.dispatch(
+                KnownEvents.DATABASE_MODIFIED,
+                EventParams(params={"deleted": deleted}),
+            )
+            return deleted
+        except sqlite3.Error as e:
+            logger.error(f"Database error during gc_temporaries: {e}")
+            return 0
 
     def find_by_mineral(self, mineral_type: str) -> list[SurfaceSpot]:
         """Lists all spots by mineral. Warning! This can be a lot."""

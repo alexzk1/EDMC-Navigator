@@ -8,6 +8,7 @@ Every test DB is created in ``/tmp`` so the repo stays clean (see the
 ``db_path`` fixture).
 """
 
+import datetime
 import math
 import os
 import tempfile
@@ -352,6 +353,52 @@ def test_delete_spot(db: DatabaseManager):
     assert spot.id is not None
     assert db.delete_spot(spot.id) is True
     assert db.get_system_spots("Beta") == []
+
+
+def _insert_raw(db: DatabaseManager, system: str, body: str, flags: int, last_visit_time: str):
+    star_id = db._get_or_create_star(system)  # type: ignore
+    with db._get_connection() as conn:  # type: ignore
+        conn.execute(
+            "INSERT INTO surface_spots "
+            "(star_id, body_name, latitude, longitude, flags, last_visit_time) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (star_id, body, 0.0, 0.0, flags, last_visit_time),
+        )
+
+
+def test_gc_temporaries_deletes_only_old_marks(db: DatabaseManager):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    old = (now - datetime.timedelta(seconds=10_000)).isoformat()
+    recent = (now - datetime.timedelta(seconds=10)).isoformat()
+    temp_flag = SurfaceSpotFlags.IS_TEMPORARY_MARK.value
+
+    _insert_raw(db, "Gc", "temp_old", temp_flag, old)
+    _insert_raw(db, "Gc", "temp_recent", temp_flag, recent)
+    _insert_raw(db, "Gc", "normal_old", 0, old)
+    _insert_raw(db, "Gc", "normal_recent", 0, recent)
+
+    deleted = db.gc_temporaries(age_secs=3600)
+    assert deleted == 1
+
+    remaining = {sp.body_name for sp in db.get_system_spots("Gc")}
+    assert remaining == {"temp_recent", "normal_old", "normal_recent"}
+    # The survivor temporary mark is still flagged as temporary.
+    temp_survivor = next(sp for sp in db.get_system_spots("Gc") if sp.body_name == "temp_recent")
+    assert SurfaceSpotFlags.IS_TEMPORARY_MARK in temp_survivor.flags
+
+
+def test_gc_temporaries_keeps_null_timestamps(db: DatabaseManager):
+    star_id = db._get_or_create_star("GcNull")  # type: ignore
+    with db._get_connection() as conn:  # type: ignore
+        conn.execute(
+            "INSERT INTO surface_spots "
+            "(star_id, body_name, latitude, longitude, flags, last_visit_time) "
+            "VALUES (?, ?, ?, ?, ?, NULL)",
+            (star_id, "temp_null", 0.0, 0.0, SurfaceSpotFlags.IS_TEMPORARY_MARK.value),
+        )
+    deleted = db.gc_temporaries(age_secs=1)
+    assert deleted == 0
+    assert len(db.get_system_spots("GcNull")) == 1
 
 
 def test_update_visit_time_advances(db: DatabaseManager):

@@ -10,7 +10,8 @@ try:
     from .main_gui_widget import MainGUIWidget
     from .mining_event_detector import RhinoMiningEventDetector
     from .models import StarSystem
-    from .overlay_client import OverlayClient, OverlayTextConf
+    from .nav_config import GC_MAX_AGE_SECS, OverlayTextConf
+    from .overlay_client import OverlayClient
     from .player_location import PlayerLocation, SurfacePoint
     from .rhino_db_updater import RhinoMiningDbUpdater
     from .status_flags import StatusFlags
@@ -26,7 +27,8 @@ except ImportError:
     from main_gui_widget import MainGUIWidget
     from mining_event_detector import RhinoMiningEventDetector
     from models import StarSystem
-    from overlay_client import OverlayClient, OverlayTextConf
+    from nav_config import GC_MAX_AGE_SECS, OverlayTextConf
+    from overlay_client import OverlayClient
     from player_location import PlayerLocation, SurfacePoint
     from rhino_db_updater import RhinoMiningDbUpdater
     from status_flags import StatusFlags
@@ -38,6 +40,10 @@ class SurfaceNavigatorPlugin:
     def __init__(self, plugin_dir: str):
         db_path = os.path.join(plugin_dir, "surface_navigator.db")
         self.db_manager = DatabaseManager(db_path)
+
+        # Sweep expired temporary marks (gc_temporaries). Cheap: sub-ms even on
+        # thousands of rows, so safe to run at startup.
+        self.db_manager.gc_temporaries(GC_MAX_AGE_SECS)
 
         # Automatic DB update if user do not enter whole description and just starts mining near the marked spot.
         self.rhino_auto_update_db = RhinoMiningDbUpdater(self.db_manager)
