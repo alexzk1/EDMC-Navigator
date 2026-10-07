@@ -1,3 +1,4 @@
+import datetime
 import math
 from dataclasses import dataclass
 
@@ -13,6 +14,31 @@ class SurfacePoint:
 
 
 DEFAULT_PLANET_RADIUS = 6371000.0
+
+# Elite's in-game calendar starts 1286 years ahead of the real one (real 2026
+# -> in-game 3312). In-game time tracks real UTC for month, day and time of day;
+# only the year is shifted. This is a fixed era offset, not a multiple of the
+# 400-year Gregorian leap cycle, so an impossible in-game date (e.g. 29 Feb in a
+# non-leap in-game year) still has to be rendered - never constructed.
+IN_GAME_YEAR_OFFSET = 1286
+
+
+def in_game_timestamp(
+    fmt: str = "%Y-%m-%d %H:%M:%S", now: datetime.datetime | None = None
+) -> str:
+    """Current UTC time rendered in the in-game calendar.
+
+    ``now`` defaults to the real current UTC, which is why it is a parameter.
+    The year is rewritten in the formatted string rather than via
+    ``datetime.replace(year=...)``. That keeps an impossible in-game date -
+    e.g. 29 Feb in a non-leap in-game year - rendered verbatim, exactly like the
+    game does, and never raises ``ValueError``.
+    """
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    real_year = f"{now.year:04d}"
+    in_game_year = f"{now.year + IN_GAME_YEAR_OFFSET:04d}"
+    return now.strftime(fmt).replace(real_year, in_game_year, 1)
 
 
 @dataclass(slots=True)
@@ -36,7 +62,7 @@ class NavigationUtils:
 
     @staticmethod
     def haversine_distance(
-        p1: SurfacePoint, p2: SurfacePoint, radius_meters: float
+        p1: SurfacePoint, p2: SurfacePoint, planet_radius_meters: float
     ) -> float:
         """
         Computes great-circle distance between 2 points in meters.
@@ -54,7 +80,7 @@ class NavigationUtils:
 
         c = 2 * math.asin(math.sqrt(a))
 
-        return radius_meters * c
+        return planet_radius_meters * c
 
     @staticmethod
     def calculate_bearing(p1: SurfacePoint, p2: SurfacePoint) -> float:

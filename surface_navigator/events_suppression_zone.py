@@ -1,5 +1,10 @@
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .player_location import NavigationUtils, PlayerLocation, SurfacePoint
+from .player_location import (
+    DEFAULT_PLANET_RADIUS,
+    NavigationUtils,
+    PlayerLocation,
+    SurfacePoint,
+)
 
 
 class EventsSuppressionManager:
@@ -10,7 +15,7 @@ class EventsSuppressionManager:
     """
 
     def __init__(self, radius_meters: float):
-        self._radius = radius_meters
+        self._radius: float = radius_meters
         self._location: PlayerLocation | None = None
 
         self._active_zones: list[SurfacePoint] = []
@@ -30,10 +35,14 @@ class EventsSuppressionManager:
 
     def is_suppressed(self, current_pos: SurfacePoint) -> bool:
         """Checks if given point is inside exclusion zone."""
+        if self._location is None:
+            return False
 
         for zone_pos in self._active_zones:
             dist = NavigationUtils.haversine_distance(
-                current_pos, zone_pos, self._radius
+                current_pos,
+                zone_pos,
+                self._location.radius_meters or DEFAULT_PLANET_RADIUS,
             )
             if dist <= self._radius:
                 return True
@@ -81,5 +90,16 @@ class EventsSuppressionManager:
             self._active_zones = []
 
 
-SUPPRESSION_RADIUS_METERS: int = 90
+SUPPRESSION_RADIUS_METERS: float = 90.0
 mining_events_suppression_manager = EventsSuppressionManager(SUPPRESSION_RADIUS_METERS)
+
+# Separate zone for automatic temporary marks (surface composition scans). Kept
+# apart from the mining manager so the two activities do not interfere with each
+# other. The surface scanner is used from the ship or SRV, so its position is
+# less precise than mining - 200 m (roughly the render horizon on foot) keeps a
+# whole settlement from turning into a cloud of bookmarks while staying loose
+# enough that a large ship's own length does not push us out of the zone.
+SURFACE_SCAN_SUPPRESSION_RADIUS_METERS: float = 200.0
+surface_scan_suppression_manager = EventsSuppressionManager(
+    SURFACE_SCAN_SUPPRESSION_RADIUS_METERS
+)

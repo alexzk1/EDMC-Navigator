@@ -7,14 +7,16 @@ from typing import Any
 try:
     from .database import DatabaseManager
     from .events_dispatcher import EventParams, KnownEvents, dispatcher
+    from .events_suppression_zone import surface_scan_suppression_manager
     from .main_gui_widget import MainGUIWidget
     from .mined_names import Commodities
     from .mining_event_detector import RhinoMiningEventDetector
-    from .models import RingScanStatus, StarSystem
+    from .models import SurfaceSpot, RingScanStatus, StarSystem
     from .nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from .overlay_client import OverlayClient
-    from .player_location import PlayerLocation, SurfacePoint
+    from .player_location import PlayerLocation, SurfacePoint, in_game_timestamp
     from .rhino_db_updater import RhinoMiningDbUpdater
+    from .spot_flags import SurfaceSpotFlags
     from .status_flags import StatusFlags
 except ImportError:
     import sys
@@ -25,14 +27,16 @@ except ImportError:
 
     from database import DatabaseManager
     from events_dispatcher import EventParams, KnownEvents, dispatcher
+    from events_suppression_zone import surface_scan_suppression_manager
     from main_gui_widget import MainGUIWidget
     from mined_names import Commodities
     from mining_event_detector import RhinoMiningEventDetector
-    from models import RingScanStatus, StarSystem
+    from models import SurfaceSpot, RingScanStatus, StarSystem
     from nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from overlay_client import OverlayClient
-    from player_location import PlayerLocation, SurfacePoint
+    from player_location import PlayerLocation, SurfacePoint, in_game_timestamp
     from rhino_db_updater import RhinoMiningDbUpdater
+    from spot_flags import SurfaceSpotFlags
     from status_flags import StatusFlags
 
 logger = logging.getLogger("SurfaceNavigator")
@@ -88,6 +92,8 @@ class SurfaceNavigatorPlugin:
         )
         if entry.get("event") == "SAASignalsFound":
             self._handle_ring_scan(system, entry)
+        if entry.get("event") == "CodexEntry":
+            self._handle_codex_entry(entry)
 
     def _extract_location_from_journal(
         self, system: str, entry: Mapping[str, Any], state: MutableMapping[str, Any]
@@ -290,6 +296,47 @@ class SurfaceNavigatorPlugin:
             )
             if added:
                 break
+
+    def _handle_codex_entry(self, entry: Mapping[str, Any]) -> None:
+        """Drops a short-lived temporary mark for a scanned surface object.
+
+        When the pilot scans something near the surface (composition scanner on
+        the ship or SRV) we bookmark their current position so they can find
+        their way back a few days later. We deliberately do not try to identify
+        what was scanned - that is nobody's business but the pilot's and other
+        plugins'. Marks are temporary (removed by ``gc_temporaries`` after a few
+        days).
+
+        A scan only counts when we have a known surface position - a CodexEntry
+        without coordinates is an object scanned in space, so we ignore it. To
+        keep a single settlement from becoming a cloud of bookmarks we suppress
+        scans that fall inside the current exclusion zone.
+        """
+        loc = self.current_location
+        if loc is None or loc.player_coord is None:
+            # No known surface position - this is a scan of an object in space.
+            return
+
+        # One bookmark per area, not one per scan. Checked before touching the
+        # DB so a settlement of scans collapses into a single mark.
+        if surface_scan_suppression_manager.is_current_player_location_suppressed():
+            return
+
+        spot = SurfaceSpot(
+            star_system=loc.star_system.star_name,
+            body_name=loc.body_name,
+            latitude=loc.player_coord.latitude,
+            longitude=loc.player_coord.longitude,
+            # In-game date (real UTC + 1286 years), e.g. "Scan at 3312-10-08 ...".
+            notes=f"Scan at {in_game_timestamp()}",
+            flags=SurfaceSpotFlags.IS_TEMPORARY_MARK,
+        )
+        if not self.db_manager.add_spot(spot):
+            return
+
+        # Record the area as suppressed. Done after the write: add_spot resets
+        # exclusion zones on DATABASE_MODIFIED, so we add the zone last.
+        surface_scan_suppression_manager.set_exclusion_zone_at_player_location()
 
     def _emit_location(self):
         dispatcher.dispatch(
