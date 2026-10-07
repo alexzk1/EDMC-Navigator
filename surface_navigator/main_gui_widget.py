@@ -5,9 +5,22 @@ from typing import Any
 from .add_spot_dialog import AddSpotDialog
 from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .models import StarSystem
+from .models import StarSystem, SurfaceSpot
 from .overlay_client import OverlayClient
 from .player_location import PlayerLocation, SurfacePoint
+from .spot_flags import SurfaceSpotFlags
+
+
+def render_note(spot: SurfaceSpot) -> str:
+    """Renders the note column for the main table.
+
+    Temporary marks (IS_TEMPORARY_MARK) get a clock emoji prefix so they stand
+    out in the list.
+    """
+    note = spot.notes or "-"
+    if SurfaceSpotFlags.IS_TEMPORARY_MARK in spot.flags:
+        note = f"\U0001F550 {note}"
+    return note
 
 
 class MainGUIWidget(ttk.Frame):
@@ -105,7 +118,7 @@ class MainGUIWidget(ttk.Frame):
                 values=(
                     (spot.mineral_type or spot.mineral_original or "-").capitalize(),
                     spot.body_name or "-",
-                    spot.notes or "Unnamed Mark",
+                    render_note(spot),
                     spot.max_miners,
                     spot.spot_number or "-",
                     spot.latitude,

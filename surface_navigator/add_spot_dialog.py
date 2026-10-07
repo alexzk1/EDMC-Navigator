@@ -6,6 +6,7 @@ from .database import DatabaseManager
 from .mined_names import Commodities
 from .models import SurfaceSpot
 from .player_location import PlayerLocation
+from .spot_flags import SurfaceSpotFlags
 
 
 class AddSpotDialog(tk.Toplevel):
@@ -21,7 +22,7 @@ class AddSpotDialog(tk.Toplevel):
         self.current_location = current_location
 
         window_width = 400
-        window_height = 550
+        window_height = 580
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         x = (screen_width // 2) - (window_width // 2)
@@ -51,6 +52,15 @@ class AddSpotDialog(tk.Toplevel):
             self.entries[key] = entry
 
         self.entries["miners_count"].insert(0, "1")
+
+        # Temporary-mark checkbox: marks the spot with IS_TEMPORARY_MARK so it
+        # gets swept by gc_temporaries() after GC_MAX_AGE_SECS.
+        self._is_temporary = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            container,
+            text="Temporary mark (auto-removed later)",
+            variable=self._is_temporary,
+        ).pack(fill=tk.X, pady=(0, 10))
 
         # Auto-populate from current location
         if current_location:
@@ -135,6 +145,11 @@ class AddSpotDialog(tk.Toplevel):
                 spot_number=spot_number,
                 notes=empty_str_as_none("note"),
                 max_miners=rigs_count,
+                flags=(
+                    SurfaceSpotFlags.IS_TEMPORARY_MARK
+                    if self._is_temporary.get()
+                    else SurfaceSpotFlags(0)
+                ),
             )
             if spot.star_system and spot.body_name:
                 # If we have StarSystem data passed, then use it as a whole to create / update star record.
