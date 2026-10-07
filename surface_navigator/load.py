@@ -101,7 +101,7 @@ class SurfaceNavigatorPlugin:
         # Keeping as much as possible of existing data until we fly away.
         # Detect the body and/or coordinates in event.
         match entry["event"]:
-            case "Location":
+            case "Location" | "CodexEntry":
                 if "Latitude" in entry:
                     loc_update_in_srv = entry.get("InSRV", False)
                     new_point = SurfacePoint(
