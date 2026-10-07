@@ -18,7 +18,7 @@ from collections.abc import Iterator
 import pytest
 
 from surface_navigator.database import DatabaseManager
-from surface_navigator.models import StarSystem, SurfaceSpot
+from surface_navigator.models import RingScanStatus, StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
@@ -163,7 +163,9 @@ def test_flags_set_and_read_back(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
     spot = db.get_system_spots("Alpha")[0]
     assert spot.id is not None
-    assert db.update_spot(spot.id, flags=SurfaceSpotFlags.IS_TEMPORARY_MARK.value) is True
+    assert (
+        db.update_spot(spot.id, flags=SurfaceSpotFlags.IS_TEMPORARY_MARK.value) is True
+    )
 
     reloaded = db.get_system_spots("Alpha")[0]
     assert reloaded.flags.value == SurfaceSpotFlags.IS_TEMPORARY_MARK.value
@@ -355,7 +357,9 @@ def test_delete_spot(db: DatabaseManager):
     assert db.get_system_spots("Beta") == []
 
 
-def _insert_raw(db: DatabaseManager, system: str, body: str, flags: int, last_visit_time: str):
+def _insert_raw(
+    db: DatabaseManager, system: str, body: str, flags: int, last_visit_time: str
+):
     star_id = db._get_or_create_star(system)  # type: ignore
     with db._get_connection() as conn:  # type: ignore
         conn.execute(
@@ -383,7 +387,9 @@ def test_gc_temporaries_deletes_only_old_marks(db: DatabaseManager):
     remaining = {sp.body_name for sp in db.get_system_spots("Gc")}
     assert remaining == {"temp_recent", "normal_old", "normal_recent"}
     # The survivor temporary mark is still flagged as temporary.
-    temp_survivor = next(sp for sp in db.get_system_spots("Gc") if sp.body_name == "temp_recent")
+    temp_survivor = next(
+        sp for sp in db.get_system_spots("Gc") if sp.body_name == "temp_recent"
+    )
     assert SurfaceSpotFlags.IS_TEMPORARY_MARK in temp_survivor.flags
 
 
@@ -522,3 +528,71 @@ def test_cascade_delete_star(db: DatabaseManager):
         db._get_connection().execute("SELECT COUNT(*) FROM surface_spots").fetchone()[0]  # type: ignore
         == 0
     )
+
+
+# ---- tritium ring marks ----
+
+
+def _tritium_status(system: str, body: str) -> RingScanStatus:
+    return RingScanStatus(
+        system=system,
+        body=body,
+        name_from_log="Tritium",
+        fuzzy_matched_name="tritium",
+    )
+
+
+def test_ensure_tritium_recorded_inserts_mark(db: DatabaseManager):
+    assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 A Ring")) is True
+    spots = db.get_system_spots("Alpha")
+    assert len(spots) == 1
+    spot = spots[0]
+    assert spot.body_name == "B 5 A Ring"
+    # Ring marks live at the origin - no real surface coordinates.
+    assert spot.latitude == 0.0
+    assert spot.longitude == 0.0
+    # Both the raw log value and the fuzzy-matched canonical name are stored.
+    assert spot.mineral_original == "Tritium"
+    assert spot.mineral_type == "tritium"
+    assert SurfaceSpotFlags.TRITIUM_RING_PRESENT in spot.flags
+
+
+def test_ensure_tritium_recorded_ignores_non_tritium(db: DatabaseManager):
+    # Alexandrite is a valid signal but not tritium - nothing is written.
+    status = RingScanStatus(
+        system="Alpha",
+        body="B 5 A Ring",
+        name_from_log="Alexandrite",
+        fuzzy_matched_name="alexandrite",
+    )
+    assert db.ensure_tritium_recorded(status) is False
+    assert db.get_system_spots("Alpha") == []
+
+
+def test_ensure_tritium_recorded_ignores_unmatched_name(db: DatabaseManager):
+    # A signal the fuzzy matcher cannot resolve -> not tritium -> no record.
+    status = RingScanStatus(
+        system="Alpha",
+        body="B 5 A Ring",
+        name_from_log="SomeUnknownThing",
+        fuzzy_matched_name=None,
+    )
+    assert db.ensure_tritium_recorded(status) is False
+    assert db.get_system_spots("Alpha") == []
+
+
+def test_ensure_tritium_recorded_is_idempotent_by_ring(db: DatabaseManager):
+    # First scan records the ring; the second scan finds it already known.
+    # Both return True (the ring is a tritium ring), but only one row is written.
+    first = db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 A Ring"))
+    second = db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 A Ring"))
+    assert first is True
+    assert second is True  # already recorded -> still "known", no new row
+    assert len(db.get_system_spots("Alpha")) == 1
+
+
+def test_ensure_tritium_recorded_independent_rings(db: DatabaseManager):
+    # Different rings in the same system are distinct marks.
+    assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 A Ring")) is True
+    assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 B Ring")) is True
+    assert len(db.get_system_spots("Alpha")) == 2

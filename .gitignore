@@ -6,7 +6,8 @@ __pycache__/
 # C extensions
 *.so
 *.db
-
+elite-api-docs/
+agents/canonn/
 # Distribution / packaging
 .Python
 build/

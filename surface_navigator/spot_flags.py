@@ -22,3 +22,7 @@ class SurfaceSpotFlags(Flag):
     # "temporary bookmark" behaviour (auto-removal once its TTL expires) is the
     # next task -- for now the flag can already be set/cleared through the DB.
     IS_TEMPORARY_MARK = auto()
+
+    # Set on ring marks whose rings contain Tritium (He3 fuel). The ring name is
+    # globally unique, so at most one such record can exist per ring.
+    TRITIUM_RING_PRESENT = auto()

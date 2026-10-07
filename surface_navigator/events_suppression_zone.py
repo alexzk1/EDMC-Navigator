@@ -46,6 +46,12 @@ class EventsSuppressionManager:
             return True
         return self.is_suppressed(self._location.srv_coord)
 
+    def is_current_player_location_suppressed(self):
+        """Check if latest known player position is in exclusion zone."""
+        if self._location is None or self._location.player_coord is None:
+            return True
+        return self.is_suppressed(self._location.player_coord)
+
     def add_exclusion_zone_center(self, point: SurfacePoint):
         """Create new exclusion zone if we have known location, otherwise ignored as we could be in space."""
         if self._location is not None:
@@ -55,6 +61,11 @@ class EventsSuppressionManager:
         if self._location is None or self._location.srv_coord is None:
             return
         self.add_exclusion_zone_center(self._location.srv_coord)
+
+    def set_exclusion_zone_at_player_location(self):
+        if self._location is None or self._location.player_coord is None:
+            return
+        self.add_exclusion_zone_center(self._location.player_coord)
 
     def _location_update_listener(self, data: EventParams):
         self._location = data.location
@@ -70,5 +81,5 @@ class EventsSuppressionManager:
             self._active_zones = []
 
 
-SUPPRESSION_RADIUS_METERS: int = 70
-events_suppression_manager = EventsSuppressionManager(SUPPRESSION_RADIUS_METERS)
+SUPPRESSION_RADIUS_METERS: int = 90
+mining_events_suppression_manager = EventsSuppressionManager(SUPPRESSION_RADIUS_METERS)

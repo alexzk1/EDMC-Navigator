@@ -1,6 +1,6 @@
 from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .events_suppression_zone import events_suppression_manager
+from .events_suppression_zone import mining_events_suppression_manager
 from .player_location import DEFAULT_PLANET_RADIUS
 
 
@@ -18,22 +18,22 @@ class RhinoMiningDbUpdater:
 
     def _on_mining_detected(self, data: EventParams):
         # Check is cheap, so we can do double check in case somebody will remove the same check in provider.
-        if events_suppression_manager.is_current_srv_location_suppressed():
+        if mining_events_suppression_manager.is_current_srv_location_suppressed():
             return
 
         # Double check to make linter happy.
-        loc = events_suppression_manager.location()
+        loc = mining_events_suppression_manager.location()
         if loc is None or loc.srv_coord is None:
             return
         # In any case, spot is seen and processed. Ignore more incoming events here.
-        events_suppression_manager.set_exclusion_zone_at_srv_location()
+        mining_events_suppression_manager.set_exclusion_zone_at_srv_location()
 
         # Update time stamp if there is any spot here. SQL will handle closeness.
         self._db_manager.update_visit_time(
             star=loc.star_system,
             body=loc.body_name,
             center=loc.srv_coord,
-            radius_meters=events_suppression_manager.radius(),
+            radius_meters=mining_events_suppression_manager.radius(),
             planet_radius_meters=loc.radius_meters or DEFAULT_PLANET_RADIUS,
         )
 
@@ -43,7 +43,7 @@ class RhinoMiningDbUpdater:
             star=loc.star_system,
             body=loc.body_name,
             center=loc.srv_coord,
-            radius_meters=events_suppression_manager.radius(),
+            radius_meters=mining_events_suppression_manager.radius(),
             planet_radius_meters=loc.radius_meters or DEFAULT_PLANET_RADIUS,
         )
 

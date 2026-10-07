@@ -3,7 +3,7 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .events_suppression_zone import events_suppression_manager
+from .events_suppression_zone import mining_events_suppression_manager
 from .mined_names import Commodities
 
 logger = logging.getLogger("SurfaceNavigator")
@@ -43,7 +43,7 @@ class RhinoMiningEventDetector:
         # If somebody will ever need mining events always, this check must be moved to the actual DB writing.
         return (
             entry.get("event") == "MiningRefined"
-            and not events_suppression_manager.is_current_srv_location_suppressed()
+            and not mining_events_suppression_manager.is_current_srv_location_suppressed()
         )
 
     def _process_mining_record(self, system: str, entry: Mapping[str, Any]):

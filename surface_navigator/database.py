@@ -4,7 +4,7 @@ import sqlite3
 from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
-from .models import StarSystem, SurfaceSpot
+from .models import RingScanStatus, StarSystem, SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
 from .spot_flags import SurfaceSpotFlags
 
@@ -341,6 +341,46 @@ class DatabaseManager:
         except sqlite3.Error as e:
             logger.error(f"Database error during add_spot: {e}")
         return False
+
+    def ensure_tritium_recorded(self, status: RingScanStatus) -> bool:
+        """Ensures the ring is recorded as a tritium (He3 fuel) ring.
+
+        A signal counts as tritium when either its fuzzy-matched name or its
+        lowercased original log name equals "tritium" (the fuzzy matcher is a
+        convenience, so a raw log name still matches when the matcher did not
+        resolve it). Rings are globally unique, so this is idempotent: a second
+        scan of the same ring (same star + body) is a no-op and never
+        overwrites the first record.
+
+        Returns True when the ring is a tritium ring - whether it was just
+        recorded or was already known - and False when the signal is not
+        tritium. Callers can treat True as "this ring is fuel, stop looking".
+        """
+        if (
+            status.fuzzy_matched_name or status.name_from_log.strip().lower()
+        ) != "tritium":
+            return False
+
+        star_id = self._get_or_create_star(status.system)
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "SELECT 1 FROM surface_spots WHERE star_id = ? AND body_name = ?",
+                (star_id, status.body),
+            )
+            if cur.fetchone() is not None:
+                # Already recorded this ring - leave the original untouched.
+                return True
+
+        spot = SurfaceSpot(
+            star_system=status.system,
+            body_name=status.body,
+            latitude=0.0,
+            longitude=0.0,
+            mineral_type=status.fuzzy_matched_name,
+            mineral_original=status.name_from_log,
+            flags=SurfaceSpotFlags.TRITIUM_RING_PRESENT,
+        )
+        return self.add_spot(spot)
 
     @staticmethod
     def _fetch_select_cursor(cursor: sqlite3.Cursor) -> list[SurfaceSpot]:

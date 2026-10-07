@@ -61,6 +61,23 @@ class SurfaceSpot:
 
 
 @dataclass
+class RingScanStatus:
+    """A single ring signal extracted from a ``SAASignalsFound`` journal entry.
+
+    ``name_from_log`` is the raw signal ``Type`` as it arrived in the log;
+    ``fuzzy_matched_name`` is the canonical (lowercased) commodity name produced
+    by the fuzzy matcher. The matcher runs in the plugin layer (it pulls in
+    EDMC's ``config``), so the DB layer only ever sees the already-resolved
+    ``fuzzy_matched_name`` and can stay free of heavy imports.
+    """
+
+    system: str
+    body: str
+    name_from_log: str
+    fuzzy_matched_name: str | None = None
+
+
+@dataclass
 class StarSystem:
     """Represents a row in the dedicated ``star_systems`` table.
 

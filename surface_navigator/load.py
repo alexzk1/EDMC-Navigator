@@ -8,8 +8,9 @@ try:
     from .database import DatabaseManager
     from .events_dispatcher import EventParams, KnownEvents, dispatcher
     from .main_gui_widget import MainGUIWidget
+    from .mined_names import Commodities
     from .mining_event_detector import RhinoMiningEventDetector
-    from .models import StarSystem
+    from .models import RingScanStatus, StarSystem
     from .nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from .overlay_client import OverlayClient
     from .player_location import PlayerLocation, SurfacePoint
@@ -25,8 +26,9 @@ except ImportError:
     from database import DatabaseManager
     from events_dispatcher import EventParams, KnownEvents, dispatcher
     from main_gui_widget import MainGUIWidget
+    from mined_names import Commodities
     from mining_event_detector import RhinoMiningEventDetector
-    from models import StarSystem
+    from models import RingScanStatus, StarSystem
     from nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from overlay_client import OverlayClient
     from player_location import PlayerLocation, SurfacePoint
@@ -84,6 +86,8 @@ class SurfaceNavigatorPlugin:
         self._mining_detector.handle_journal_entry(
             cmdr, is_beta, system, station, entry, state
         )
+        if entry.get("event") == "SAASignalsFound":
+            self._handle_ring_scan(system, entry)
 
     def _extract_location_from_journal(
         self, system: str, entry: Mapping[str, Any], state: MutableMapping[str, Any]
@@ -258,6 +262,34 @@ class SurfaceNavigatorPlugin:
         else:
             body_name = raw_body_name
         return body_name
+
+    def _handle_ring_scan(self, system: str, entry: Mapping[str, Any]) -> None:
+        """Registers rings that contain Tritium (He3 fuel) from SAASignalsFound.
+
+        Only tritium rings are worth remembering - fuel is found in random
+        places, while every other material is mined at a single known location.
+        For each signal we resolve its name through the fuzzy matcher and let
+        the DB decide (match + dedup + insert).
+        """
+        signals = entry.get("Signals")
+        if not signals:
+            return
+        body = self._clean_body_name(system, entry.get("BodyName", ""))
+        for signal in signals:
+            name_from_log = signal.get("Type")
+            if not name_from_log:
+                continue
+            fuzzy_matched_name = Commodities.resolve_db_value(name_from_log)
+            added = self.db_manager.ensure_tritium_recorded(
+                RingScanStatus(
+                    system=system,
+                    body=body,
+                    name_from_log=name_from_log,
+                    fuzzy_matched_name=fuzzy_matched_name,
+                )
+            )
+            if added:
+                break
 
     def _emit_location(self):
         dispatcher.dispatch(
