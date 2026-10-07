@@ -14,9 +14,12 @@ from .spot_flags import SurfaceSpotFlags
 def render_note(spot: SurfaceSpot) -> str:
     """Renders the note column for the main table.
 
-    Temporary marks (IS_TEMPORARY_MARK) get a clock emoji prefix so they stand
-    out in the list.
+    Tritium rings (TRITIUM_RING_PRESENT) get a fuel-pump marker so they stand
+    out - this is fuel found in random places, worth remembering on its own.
+    Temporary marks (IS_TEMPORARY_MARK) get a clock emoji prefix instead.
     """
+    if SurfaceSpotFlags.TRITIUM_RING_PRESENT in spot.flags:
+        return "\u26BE Trit Ring"
     note = spot.notes or "-"
     if SurfaceSpotFlags.IS_TEMPORARY_MARK in spot.flags:
         note = f"\U0001F550 {note}"
