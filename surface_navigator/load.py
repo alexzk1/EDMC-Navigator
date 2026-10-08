@@ -75,7 +75,8 @@ class SurfaceNavigatorPlugin:
         """Called by EDMC when a journal event occurs."""
         system_changed = self._update_last_system(system, entry)
         # Galactic coordinates only arrive on a jump, so only then enrich the DB.
-        if entry.get("event") == "FSDJump":
+        # ``CarrierJump`` (fleet carrier jump) carries ``StarPos`` too.
+        if entry.get("event") in {"FSDJump", "CarrierJump"}:
             self.db_manager.update_existing_star_coords(self.last_system)
         if self._extract_location_from_journal(system, entry, state) or system_changed:
             self._emit_location()
@@ -143,7 +144,7 @@ class SurfaceNavigatorPlugin:
                     new_point = SurfacePoint(
                         latitude=entry["Latitude"], longitude=entry["Longitude"]
                     )
-            case "FSDJump" | "LeaveBody" | "Resurrect":
+            case "FSDJump" | "CarrierJump" | "LeaveBody" | "Resurrect":
                 self.current_location = None
                 # Reset any stored navigation in overlay, we're out...
                 self._overlay.navigate_to(None)

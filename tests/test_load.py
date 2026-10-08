@@ -64,3 +64,21 @@ def test_update_last_system_keeps_unknown_values():
     assert changed is False
     assert plugin.last_system.systemid == 999
     assert plugin.last_system.x is None
+
+
+def test_update_last_system_carrier_jump_sets_coords():
+    # A fleet carrier jump carries StarPos just like FSDJump - coordinates and
+    # systemid are attached so the DB backfill can write them.
+    plugin = _plugin()
+    entry = {
+        "event": "CarrierJump",
+        "SystemAddress": 5363877956440,
+        "StarPos": [-28.75, 25.0, 10.4375],
+    }
+    changed = plugin._update_last_system("Hermitage", entry)
+    assert changed is True
+    assert plugin.last_system.star_name == "Hermitage"
+    assert plugin.last_system.systemid == 5363877956440
+    assert plugin.last_system.x == -28.75
+    assert plugin.last_system.y == 25.0
+    assert plugin.last_system.z == 10.4375
