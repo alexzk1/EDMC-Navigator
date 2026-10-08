@@ -535,7 +535,7 @@ def test_cascade_delete_star(db: DatabaseManager):
 
 def _tritium_status(system: str, body: str) -> RingScanStatus:
     return RingScanStatus(
-        system=system,
+        system=StarSystem(star_name=system),
         body=body,
         name_from_log="Tritium",
         fuzzy_matched_name="tritium",
@@ -560,7 +560,7 @@ def test_ensure_tritium_recorded_inserts_mark(db: DatabaseManager):
 def test_ensure_tritium_recorded_ignores_non_tritium(db: DatabaseManager):
     # Alexandrite is a valid signal but not tritium - nothing is written.
     status = RingScanStatus(
-        system="Alpha",
+        system=StarSystem(star_name="Alpha"),
         body="B 5 A Ring",
         name_from_log="Alexandrite",
         fuzzy_matched_name="alexandrite",
@@ -572,7 +572,7 @@ def test_ensure_tritium_recorded_ignores_non_tritium(db: DatabaseManager):
 def test_ensure_tritium_recorded_ignores_unmatched_name(db: DatabaseManager):
     # A signal the fuzzy matcher cannot resolve -> not tritium -> no record.
     status = RingScanStatus(
-        system="Alpha",
+        system=StarSystem(star_name="Alpha"),
         body="B 5 A Ring",
         name_from_log="SomeUnknownThing",
         fuzzy_matched_name=None,
@@ -596,6 +596,28 @@ def test_ensure_tritium_recorded_independent_rings(db: DatabaseManager):
     assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 A Ring")) is True
     assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 B Ring")) is True
     assert len(db.get_system_spots("Alpha")) == 2
+
+
+def test_ensure_tritium_recorded_writes_coordinates(db: DatabaseManager):
+    # A StarSystem that carries coordinates records x/y/z immediately instead
+    # of leaving the star row NULL.
+    status = _tritium_status("Beta", "B 5 A Ring")
+    status.system.x, status.system.y, status.system.z = 1.0, 2.0, 3.0
+    assert db.ensure_tritium_recorded(status) is True
+    assert _star_coords(db, "Beta") == (1.0, 2.0, 3.0)
+
+
+def test_ensure_tritium_recorded_backfills_existing_null_row(db: DatabaseManager):
+    # A repeat visit: the star already exists with NULL coords, so the ring
+    # scan fills them in rather than creating a duplicate row.
+    db.ensure_tritium_recorded(_tritium_status("Gamma", "B 5 B Ring"))
+    assert _star_coords(db, "Gamma") == (None, None, None)
+
+    status = _tritium_status("Gamma", "B 5 A Ring")
+    status.system.x, status.system.y, status.system.z = 4.0, 5.0, 6.0
+    assert db.ensure_tritium_recorded(status) is True
+    assert _star_coords(db, "Gamma") == (4.0, 5.0, 6.0)
+    assert _star_row_count(db, "Gamma") == 1
 
 
 # ---- star coordinate backfill ----------------------------------------------

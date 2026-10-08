@@ -395,6 +395,9 @@ class DatabaseManager:
         ) != "tritium":
             return False
 
+        # ``status.system`` is the current StarSystem, so its x/y/z and
+        # systemid are written to the star row right away (or backfilled into
+        # an existing NULL row) instead of being left NULL.
         star_id = self._get_or_create_star(status.system)
         with self._get_connection() as conn:
             cur = conn.execute(
@@ -406,7 +409,7 @@ class DatabaseManager:
                 return True
 
         spot = SurfaceSpot(
-            star_system=status.system,
+            star_system=status.system.star_name,
             body_name=status.body,
             latitude=0.0,
             longitude=0.0,

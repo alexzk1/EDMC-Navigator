@@ -83,7 +83,7 @@ class SurfaceNavigatorPlugin:
             cmdr, is_beta, system, station, entry, state
         )
         if entry.get("event") == "SAASignalsFound":
-            self._handle_ring_scan(system, entry)
+            self._handle_ring_scan(entry)
         if entry.get("event") == "CodexEntry":
             self._handle_codex_entry(entry)
 
@@ -157,6 +157,8 @@ class SurfaceNavigatorPlugin:
                 | "SupercruiseExit"
             ):
                 dirty_new_body = entry.get("Body") or ""
+                if dirty_new_body == system:
+                    dirty_new_body = ""
                 had_approach = True
             case "ApproachSettlement":
                 dirty_new_body = entry.get("BodyName") or ""
@@ -299,7 +301,7 @@ class SurfaceNavigatorPlugin:
             body_name = raw_body_name
         return body_name
 
-    def _handle_ring_scan(self, system: str, entry: Mapping[str, Any]) -> None:
+    def _handle_ring_scan(self, entry: Mapping[str, Any]) -> None:
         """Registers rings that contain Tritium (He3 fuel) from SAASignalsFound.
 
         Only tritium rings are worth remembering - fuel is found in random
@@ -310,7 +312,8 @@ class SurfaceNavigatorPlugin:
         signals = entry.get("Signals")
         if not signals:
             return
-        body = self._clean_body_name(system, entry.get("BodyName", ""))
+        system_name = self.last_system.star_name
+        body = self._clean_body_name(system_name, entry.get("BodyName", ""))
         for signal in signals:
             name_from_log = signal.get("Type")
             if not name_from_log:
@@ -318,7 +321,7 @@ class SurfaceNavigatorPlugin:
             fuzzy_matched_name = Commodities.resolve_db_value(name_from_log)
             added = self.db_manager.ensure_tritium_recorded(
                 RingScanStatus(
-                    system=system,
+                    system=self.last_system,
                     body=body,
                     name_from_log=name_from_log,
                     fuzzy_matched_name=fuzzy_matched_name,
