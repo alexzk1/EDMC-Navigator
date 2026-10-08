@@ -73,30 +73,44 @@ class SurfaceNavigatorPlugin:
         state: MutableMapping[str, Any],
     ):
         """Called by EDMC when a journal event occurs."""
-        system_changed = self._update_last_system(system, entry)
+
+        system_changed, miss_xyz = self._update_last_system(system, entry)
         # Galactic coordinates only arrive on a jump, so only then enrich the DB.
         # ``CarrierJump`` (fleet carrier jump) carries ``StarPos`` too.
-        if entry.get("event") in {"FSDJump", "CarrierJump"}:
+        event_name = entry.get("event")
+        if event_name in {"FSDJump", "CarrierJump"} or (
+            event_name == "Location" and miss_xyz
+        ):
             self.db_manager.update_existing_star_coords(self.last_system)
         if self._extract_location_from_journal(system, entry, state) or system_changed:
             self._emit_location()
         self._mining_detector.handle_journal_entry(
             cmdr, is_beta, system, station, entry, state
         )
-        if entry.get("event") == "SAASignalsFound":
+        if event_name == "SAASignalsFound":
             self._handle_ring_scan(entry)
-        if entry.get("event") == "CodexEntry":
+        if event_name == "CodexEntry":
             self._handle_codex_entry(entry)
 
-    def _update_last_system(self, system: str, entry: Mapping[str, Any]) -> bool:
-        """Rebuilds ``self.last_system`` from the event and reports whether we
-        changed systems.
+    def _update_last_system(
+        self, system: str, entry: Mapping[str, Any]
+    ) -> tuple[bool, bool]:
+        """Rebuilds ``self.last_system`` from the event and reports two things.
+
+        The first return value is ``changed``: whether we switched to a
+        different system. The second is ``miss_xyz``: whether coordinates were
+        still unknown *before* this event applied its ``StarPos``. A ``Location``
+        event uses that flag to decide whether to backfill the DB exactly once
+        (systems we merely fly through via a jump never trigger it, and a
+        second ``Location`` in the same system finds ``miss_xyz`` already
+        ``False``).
 
         The destination name always comes from the event. ``systemid`` (from
         ``SystemAddress``) and galactic coordinates (from ``StarPos``) are
         attached to the object only when the event provides them, so a value we
         never learn is never clobbered.
         """
+
         changed = system != self.last_system.star_name
         if changed:
             self.current_location = None
@@ -108,10 +122,19 @@ class SurfaceNavigatorPlugin:
                 self.last_system.systemid = addr
                 changed = True
 
+        miss_xyz: bool = (
+            self.last_system.x is None
+            or self.last_system.y is None
+            or self.last_system.z is None
+        )
+
         if (coords := self._parse_star_pos(entry)) is not None:
             self.last_system.x, self.last_system.y, self.last_system.z = coords
 
-        return changed
+        return (
+            changed,
+            miss_xyz,
+        )
 
     def _parse_star_pos(
         self, entry: Mapping[str, Any]
@@ -356,6 +379,8 @@ class SurfaceNavigatorPlugin:
         if surface_scan_suppression_manager.is_current_player_location_suppressed():
             return
 
+        # Ensure we create star with x/y/z provided.
+        self.db_manager.ensure_star_exists(loc.star_system)
         spot = SurfaceSpot(
             star_system=loc.star_system.star_name,
             body_name=loc.body_name,
