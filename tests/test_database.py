@@ -596,3 +596,60 @@ def test_ensure_tritium_recorded_independent_rings(db: DatabaseManager):
     assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 A Ring")) is True
     assert db.ensure_tritium_recorded(_tritium_status("Alpha", "B 5 B Ring")) is True
     assert len(db.get_system_spots("Alpha")) == 2
+
+
+# ---- star coordinate backfill ----------------------------------------------
+
+
+def _star_coords(db: DatabaseManager, system: str):
+    conn = db._get_connection()  # type: ignore
+    row = conn.execute(
+        "SELECT x, y, z FROM star_systems WHERE star_name = ?", (system,)
+    ).fetchone()
+    return tuple(row) if row else (None, None, None)
+
+
+def _star_row_count(db: DatabaseManager, system: str) -> int:
+    conn = db._get_connection()  # type: ignore
+    return conn.execute(
+        "SELECT COUNT(*) FROM star_systems WHERE star_name = ?", (system,)
+    ).fetchone()[0]
+
+
+def test_update_existing_star_coords_fills_null_columns(db: DatabaseManager):
+    # A spot creates the star row with NULL coordinates.
+    db.add_spot(_spot("Alpha", "Kepler-442 b", 10.0, 20.0))
+    assert _star_coords(db, "Alpha") == (None, None, None)
+
+    updated = db.update_existing_star_coords(
+        StarSystem(star_name="Alpha", x=1.5, y=-2.5, z=0.75)
+    )
+    assert updated == 3
+    assert _star_coords(db, "Alpha") == (1.5, -2.5, 0.75)
+
+
+def test_update_existing_star_coords_only_fills_missing(db: DatabaseManager):
+    # A row that already has x but lacks y and z.
+    with db._get_connection() as conn:  # type: ignore
+        conn.execute("INSERT INTO star_systems (star_name, x) VALUES ('Beta', 1.0)")
+    # A later jump fills only the still-NULL columns, leaving x untouched.
+    assert db.update_existing_star_coords(
+        StarSystem(star_name="Beta", x=9.0, y=2.0, z=3.0)
+    ) == 2
+    assert _star_coords(db, "Beta") == (1.0, 2.0, 3.0)
+
+
+def test_update_existing_star_coords_no_op_when_complete(db: DatabaseManager):
+    db.add_spot(_spot("Gamma", "Kepler-231 d", 0.0, 0.0))
+    db.update_existing_star_coords(StarSystem(star_name="Gamma", x=1.0, y=2.0, z=3.0))
+    assert db.update_existing_star_coords(
+        StarSystem(star_name="Gamma", x=4.0, y=5.0, z=6.0)
+    ) == 0
+
+
+def test_update_existing_star_coords_never_creates(db: DatabaseManager):
+    # Systems we merely fly through are left alone - no row, no spots.
+    assert db.update_existing_star_coords(
+        StarSystem(star_name="Nowhere", x=1.0, y=2.0, z=3.0)
+    ) == 0
+    assert _star_row_count(db, "Nowhere") == 0

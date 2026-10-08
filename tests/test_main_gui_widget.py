@@ -4,8 +4,8 @@ from surface_navigator.main_gui_widget import render_note
 from surface_navigator.models import SurfaceSpot
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
-# Fuel-pump marker shown for tritium rings in the note column.
-TRITIUM_RING_NOTE = f"\u26BE Trit Ring"
+# Fuel-pump marker (U+26FD) shown for tritium rings in the note column.
+TRITIUM_RING_NOTE = "\u26FD Trit Ring"
 
 
 def test_render_note_plain_when_no_flag():
@@ -41,3 +41,11 @@ def test_render_note_tritium_wins_over_clock():
         flags=SurfaceSpotFlags.TRITIUM_RING_PRESENT | SurfaceSpotFlags.IS_TEMPORARY_MARK,
     )
     assert render_note(spot) == TRITIUM_RING_NOTE
+
+
+def test_render_note_tritium_uses_fuel_pump_glyph():
+    # Pin the exact glyph: U+26FD FUEL PUMP, not U+26BE (BASEBALL) or U+2622
+    # (RADIATION) - the symbol is the whole point of the marker.
+    assert TRITIUM_RING_NOTE.startswith("\u26FD")
+    assert "\u26BE" not in TRITIUM_RING_NOTE
+    assert "\u2622" not in TRITIUM_RING_NOTE

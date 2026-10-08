@@ -73,18 +73,10 @@ class SurfaceNavigatorPlugin:
         state: MutableMapping[str, Any],
     ):
         """Called by EDMC when a journal event occurs."""
-        system_changed: bool = system != self.last_system.star_name
-        if system_changed:
-            self.current_location = None
-            self.last_system = StarSystem(star_name=system)
-
-        if self.last_system.systemid is None:
-            addr: int | None = entry.get("SystemAddress")
-            if addr is not None:
-                self.last_system.systemid = addr
-                # Trigger updated as we just updated Address
-                system_changed = True
-
+        system_changed = self._update_last_system(system, entry)
+        # Galactic coordinates only arrive on a jump, so only then enrich the DB.
+        if entry.get("event") == "FSDJump":
+            self.db_manager.update_existing_star_coords(self.last_system)
         if self._extract_location_from_journal(system, entry, state) or system_changed:
             self._emit_location()
         self._mining_detector.handle_journal_entry(
@@ -94,6 +86,44 @@ class SurfaceNavigatorPlugin:
             self._handle_ring_scan(system, entry)
         if entry.get("event") == "CodexEntry":
             self._handle_codex_entry(entry)
+
+    def _update_last_system(self, system: str, entry: Mapping[str, Any]) -> bool:
+        """Rebuilds ``self.last_system`` from the event and reports whether we
+        changed systems.
+
+        The destination name always comes from the event. ``systemid`` (from
+        ``SystemAddress``) and galactic coordinates (from ``StarPos``) are
+        attached to the object only when the event provides them, so a value we
+        never learn is never clobbered.
+        """
+        changed = system != self.last_system.star_name
+        if changed:
+            self.current_location = None
+            self.last_system = StarSystem(star_name=system)
+
+        if self.last_system.systemid is None:
+            addr = entry.get("SystemAddress")
+            if addr is not None:
+                self.last_system.systemid = addr
+                changed = True
+
+        if (coords := self._parse_star_pos(entry)) is not None:
+            self.last_system.x, self.last_system.y, self.last_system.z = coords
+
+        return changed
+
+    def _parse_star_pos(
+        self, entry: Mapping[str, Any]
+    ) -> tuple[float, float, float] | None:
+        """Returns galactic ``StarPos`` ``[x, y, z]`` as floats, or None when the
+        event carries no usable position (e.g. ``LoadGame`` resting in a system)."""
+        star_pos = entry.get("StarPos")
+        if not star_pos or len(star_pos) < 3:
+            return None
+        try:
+            return float(star_pos[0]), float(star_pos[1]), float(star_pos[2])
+        except (TypeError, ValueError):
+            return None
 
     def _extract_location_from_journal(
         self, system: str, entry: Mapping[str, Any], state: MutableMapping[str, Any]
