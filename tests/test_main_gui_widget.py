@@ -5,7 +5,8 @@ from surface_navigator.models import SurfaceSpot
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
 # Fuel-pump marker (U+26FD) shown for tritium rings in the note column.
-TRITIUM_RING_NOTE = "\u26FD Trit Ring"
+# Falls back to "Tritium Ring" when the ring carries no note of its own.
+TRITIUM_RING_NOTE = "\u26fd Tritium Ring"
 
 
 def test_render_note_plain_when_no_flag():
@@ -29,18 +30,19 @@ def test_render_note_clock_with_empty_notes():
 
 
 def test_render_note_tritium_ring_marker():
-    # Tritium rings carry no note, but the fuel-pump marker makes them stand out.
+    # Tritium rings carry no note, so the fuel-pump marker + fallback name show.
     spot = SurfaceSpot(mineral_type="tritium", flags=SurfaceSpotFlags.TRITIUM_RING_PRESENT)
     assert render_note(spot) == TRITIUM_RING_NOTE
 
 
 def test_render_note_tritium_wins_over_clock():
     # A ring is not a temporary mark; the tritium marker takes precedence.
+    # The ring's own note is shown instead of the fallback name.
     spot = SurfaceSpot(
         notes="Scan at 3312-01-01 00:00:00",
         flags=SurfaceSpotFlags.TRITIUM_RING_PRESENT | SurfaceSpotFlags.IS_TEMPORARY_MARK,
     )
-    assert render_note(spot) == TRITIUM_RING_NOTE
+    assert render_note(spot) == "\u26fd Scan at 3312-01-01 00:00:00"
 
 
 def test_render_note_tritium_uses_fuel_pump_glyph():

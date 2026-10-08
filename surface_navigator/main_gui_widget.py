@@ -19,10 +19,10 @@ def render_note(spot: SurfaceSpot) -> str:
     Temporary marks (IS_TEMPORARY_MARK) get a clock emoji prefix instead.
     """
     if SurfaceSpotFlags.TRITIUM_RING_PRESENT in spot.flags:
-        return "\u26FD Trit Ring"
+        return "\u26fd " + (spot.notes or "Tritium Ring")
     note = spot.notes or "-"
     if SurfaceSpotFlags.IS_TEMPORARY_MARK in spot.flags:
-        note = f"\U0001F550 {note}"
+        note = f"\U0001f550 {note}"
     return note
 
 
