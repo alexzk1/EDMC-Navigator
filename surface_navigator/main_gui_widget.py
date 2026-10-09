@@ -10,6 +10,8 @@ from .overlay_client import OverlayClient
 from .player_location import PlayerLocation, SurfacePoint
 from .spot_flags import SurfaceSpotFlags
 
+_NUMERIC_COLUMNS_WIDTH: int = 15
+
 
 def render_note(spot: SurfaceSpot) -> str:
     """Renders the note column for the main table.
@@ -70,7 +72,7 @@ class MainGUIWidget(ttk.Frame):
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("mineral", "body", "note", "rigs", "nav", "lat", "lon", "db_id")
+        columns = ("#", "mineral", "body", "note", "rigs", "nav", "lat", "lon", "db_id")
         self._tree = ttk.Treeview(
             tree_container, columns=columns, show="headings", height=8
         )
@@ -79,14 +81,14 @@ class MainGUIWidget(ttk.Frame):
                 self._tree.column(col, width=0, stretch=False)
                 self._tree.heading(col, text="")
             else:
-                width = 70
+                width = 50
                 if col == "note":
-                    width = 120
-                if col in ["rigs", "nav"]:
-                    width = 20
+                    width = 80
+                if col in ["rigs", "nav", "#"]:
+                    width = _NUMERIC_COLUMNS_WIDTH
                 self._tree.column(col, width=width)
                 self._tree.heading(col, text=col.capitalize())
-        self._show_hide_body(False)
+        self._sync_view_columns(missing_body=True)
         scrollbar = ttk.Scrollbar(
             tree_container,
             orient="vertical",
@@ -97,28 +99,43 @@ class MainGUIWidget(ttk.Frame):
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-    def _show_hide_body(self, show: bool):
-        if show:
-            self._tree.column("body", width=20, stretch=True)
+    def _sync_view_columns(self, missing_body: bool):
+        """Toggle the ``body`` and ``#`` (numbering) columns for the current view.
+
+        When body information is missing we are looking at a whole system, so
+        spots can belong to different bodies - show the ``body`` column and hide
+        the per-body numbering. Once we are on a specific body every spot belongs
+        to it, so hide ``body`` and reveal the ``#`` numbering column instead.
+        The two columns are exact inverses of each other.
+        """
+        if missing_body:
+            self._tree.column("body", width=_NUMERIC_COLUMNS_WIDTH, stretch=True)
             self._tree.heading("body", text="Body")
+            self._tree.column("#", width=0, stretch=False)
+            self._tree.heading("#", text="")
         else:
             self._tree.column("body", width=0, stretch=False)
             self._tree.heading("body", text="")
+            self._tree.column("#", width=_NUMERIC_COLUMNS_WIDTH, stretch=False)
+            self._tree.heading("#", text="#")
 
     def _load_data(self):
+
+        is_system_list: bool = self.current_location is None
         for item in self._tree.get_children():
             self._tree.delete(item)
         spots = (
             self.db_manager.get_system_spots(self.current_system)
-            if self.current_location is None
+            if is_system_list
             else self.db_manager.get_planetary_spots(self.current_location)
         )
 
-        for spot in spots:
+        for number, spot in enumerate(spots, start=1):
             self._tree.insert(
                 "",
                 tk.END,
                 values=(
+                    number,
                     (spot.mineral_type or spot.mineral_original or "-").capitalize(),
                     spot.body_name or "-",
                     render_note(spot),
@@ -192,7 +209,7 @@ class MainGUIWidget(ttk.Frame):
         need_refresh = False
         if need_switch:
             need_refresh = True
-            self._show_hide_body(show=self.current_location is None)
+            self._sync_view_columns(missing_body=self.current_location is None)
         if body != self.last_known_full_body:
             self.last_known_full_body = body
             need_refresh = True

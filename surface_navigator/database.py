@@ -460,7 +460,7 @@ class DatabaseManager:
         with self._get_connection() as conn:
             return DatabaseManager._fetch_select_cursor(
                 conn.execute(
-                    f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE star_systems.star_name = ? AND body_name = ?",
+                    f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} WHERE star_systems.star_name = ? AND body_name = ? ORDER BY surface_spots.id",
                     (location.star_system.star_name, location.body_name),
                 )
             )
