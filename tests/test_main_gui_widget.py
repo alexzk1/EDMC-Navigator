@@ -1,6 +1,6 @@
 """Tests for the pure note-rendering helper used by the main table."""
 
-from surface_navigator.main_gui_widget import render_note
+from surface_navigator.main_gui_widget import MainGUIWidget, render_note
 from surface_navigator.models import SurfaceSpot
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
@@ -51,3 +51,18 @@ def test_render_note_tritium_uses_fuel_pump_glyph():
     assert TRITIUM_RING_NOTE.startswith("\u26FD")
     assert "\u26BE" not in TRITIUM_RING_NOTE
     assert "\u2622" not in TRITIUM_RING_NOTE
+
+
+def test_format_distance_short_is_in_meters():
+    assert MainGUIWidget._format_distance(0) == "0 m"
+    assert MainGUIWidget._format_distance(340) == "340 m"
+    assert MainGUIWidget._format_distance(999) == "999 m"
+
+
+def test_format_distance_long_is_in_km():
+    assert MainGUIWidget._format_distance(1000) == "1.0 km"
+    assert MainGUIWidget._format_distance(12300) == "12.3 km"
+
+
+def test_format_distance_without_coordinates_is_dash():
+    assert MainGUIWidget._format_distance(float("inf")) == "—"

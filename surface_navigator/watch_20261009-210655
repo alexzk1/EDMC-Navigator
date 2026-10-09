@@ -1,0 +1,4 @@
+     1  { "timestamp":"2026-10-09T18:06:49Z", "event":"Status", "Flags":270532614, "Flags2":4227345, "Oxygen":1.000000, "Health":1.000000, "Temperature"
+:118.577240, "SelectedWeapon":"$humanoid_fists_name;", "SelectedWeapon_Localised":"Unarmed", "Gravity":0.389886, "LegalState":"Clean", "Latitude":-18.23
+4241, "Longitude":2.462941, "Heading":156, "BodyName":"Roefoo ZE-H d10-0 AB 1", "PlanetRadius":2579818.000000, "Balance":12726380429 }                  
+cat: 1: No such file or directory                                                                                                                       
