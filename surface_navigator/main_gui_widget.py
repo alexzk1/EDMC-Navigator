@@ -8,7 +8,12 @@ from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import StarSystem, SurfaceSpot
 from .overlay_client import OverlayClient
-from .player_location import DEFAULT_PLANET_RADIUS, NavigationUtils, PlayerLocation, SurfacePoint
+from .player_location import (
+    DEFAULT_PLANET_RADIUS,
+    NavigationUtils,
+    PlayerLocation,
+    SurfacePoint,
+)
 from .spot_flags import SurfaceSpotFlags
 
 
@@ -80,7 +85,18 @@ class MainGUIWidget(ttk.Frame):
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("#", "dist", "mineral", "body", "note", "rigs", "nav", "lat", "lon", "db_id")
+        columns = (
+            "#",
+            "dist",
+            "mineral",
+            "body",
+            "note",
+            "rigs",
+            "nav",
+            "lat",
+            "lon",
+            "db_id",
+        )
         self._tree = ttk.Treeview(
             tree_container, columns=columns, show="headings", height=8
         )
@@ -247,17 +263,9 @@ class MainGUIWidget(ttk.Frame):
             )
         rows.sort(key=lambda pair: pair[1])
         for item, dist in rows:
-            self._tree.set(item, "dist", self._format_distance(dist))
+            self._tree.set(item, "dist", NavigationUtils.format_distance(dist))
         for item, _ in rows:
             self._tree.move(item, "", "end")
-
-    @staticmethod
-    def _format_distance(dist: float) -> str:
-        if dist == float("inf"):
-            return "—"
-        if dist < 1000:
-            return f"{dist:.0f} m"
-        return f"{dist / 1000:.1f} km"
 
     def _capture_selected_ids(self) -> list[int]:
         ids: list[int] = []

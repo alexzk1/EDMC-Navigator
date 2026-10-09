@@ -99,3 +99,18 @@ class NavigationUtils:
 
         initial_bearing = math.atan2(x, y)
         return (math.degrees(initial_bearing) + 360) % 360
+
+    @staticmethod
+    def format_distance(dist: float) -> str:
+        """Format a distance for display (shared by the overlay and the GUI).
+
+        ``inf`` means there is no valid coordinate yet, so we render a dash.
+        Below 1 km we show whole meters; above that kilometres to 2 decimals --
+        tens of metres is the precision actually visible in-game, so that is the
+        floor we keep.
+        """
+        if dist == float("inf"):
+            return "—"
+        if dist < 1000:
+            return f"{dist:.0f} m"
+        return f"{dist / 1000:.2f} km"

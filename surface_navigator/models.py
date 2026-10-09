@@ -27,12 +27,12 @@ class SurfaceSpot:
     # Bit-field of SurfaceSpotFlags. Stored as INTEGER in the DB; defaults to 0
     # (no flags). ``__post_init__`` normalises the plain int the DB returns into
     # a SurfaceSpotFlags so callers can test membership directly.
-    flags: SurfaceSpotFlags = SurfaceSpotFlags(0)
+    flags: SurfaceSpotFlags = SurfaceSpotFlags(0)  # noqa: RUF009
 
     def __post_init__(self) -> None:
         # The DB stores flags as a plain INTEGER; coerce so callers always get a
         # SurfaceSpotFlags they can query with ``IS_TEMPORARY_MARK in self.flags``.
-        if not isinstance(self.flags, SurfaceSpotFlags):
+        if not isinstance(self.flags, SurfaceSpotFlags):  # type: ignore
             self.flags = SurfaceSpotFlags(int(self.flags))
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,7 +55,7 @@ class SurfaceSpot:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SurfaceSpot":
+    def from_dict(cls, data: dict[str, Any]) -> SurfaceSpot:
         dt = data.get("last_visit_time")
         if dt and isinstance(dt, str):
             data["last_visit_time"] = datetime.datetime.fromisoformat(dt)

@@ -11,13 +11,14 @@ try:
     from .main_gui_widget import MainGUIWidget
     from .mined_names import Commodities
     from .mining_event_detector import RhinoMiningEventDetector
-    from .models import SurfaceSpot, RingScanStatus, StarSystem
+    from .models import RingScanStatus, StarSystem, SurfaceSpot
     from .nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from .overlay_client import OverlayClient
     from .player_location import PlayerLocation, SurfacePoint, in_game_timestamp
     from .rhino_db_updater import RhinoMiningDbUpdater
     from .spot_flags import SurfaceSpotFlags
     from .status_flags import StatusFlags
+    from .time_scheduler import scheduler
 except ImportError:
     import sys
 
@@ -31,13 +32,14 @@ except ImportError:
     from main_gui_widget import MainGUIWidget
     from mined_names import Commodities
     from mining_event_detector import RhinoMiningEventDetector
-    from models import SurfaceSpot, RingScanStatus, StarSystem
+    from models import RingScanStatus, StarSystem, SurfaceSpot
     from nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from overlay_client import OverlayClient
     from player_location import PlayerLocation, SurfacePoint, in_game_timestamp
     from rhino_db_updater import RhinoMiningDbUpdater
     from spot_flags import SurfaceSpotFlags
     from status_flags import StatusFlags
+    from time_scheduler import scheduler
 
 logger = logging.getLogger("SurfaceNavigator")
 
@@ -407,6 +409,10 @@ class SurfaceNavigatorPlugin:
         )
 
     def create_gui(self, parent: Any) -> MainGUIWidget | None:
+        # Bind the GUI root first: the scheduler hands out timers through it,
+        # and everything time-dependent (the overlay's extrapolation) depends on
+        # that root existing. So the GUI must come before anything that schedules.
+        scheduler.bind_root(parent)
         if self._gui is None:
             self._gui = MainGUIWidget(parent, self.db_manager, self._overlay)
             self._gui.current_location = self.current_location

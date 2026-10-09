@@ -1,4 +1,5 @@
 import logging
+import time
 from enum import Enum, auto
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
@@ -16,6 +17,8 @@ from .player_location import (
     PlayerLocation,
     SurfacePoint,
 )
+from .time_scheduler import scheduler
+from .velocity_extrapolator import VelocityExtrapolator
 
 try:
     try:
@@ -42,6 +45,10 @@ class OverlayClient:
     # and it should be short enough to avoid annoyance.
     TEXT_TIMEOUT_SEC: int = OVERLAY_TEXT_TIMEOUT_SEC
     MESSAGE_ID = CONFIG_MESSAGE_ID
+    # Extrapolation only kicks in once real positions stop arriving. Keeping the
+    # threshold below the game's ~2s Status cadence keeps the display fresh
+    # between updates without spamming redundant projected positions.
+    STALE_THRESHOLD_SEC: float = 1.0
 
     def __init__(self, conf: OverlayTextConf):
         self._config = conf
@@ -49,6 +56,13 @@ class OverlayClient:
 
         self._destination: SurfacePoint | None = None
         self._location: PlayerLocation | None = None
+
+        # Position extrapolation keeps the overlay fresh between sparse game
+        # updates. The overlay feeds it (single source of truth) and owns the
+        # timer that drives the projection.
+        self._extrapolator: VelocityExtrapolator = VelocityExtrapolator()
+        self._last_real_ts: float = 0.0
+        self._timer_id: int | None = None
 
         self._has_multiline = False
         self._has_multiline = self.supports_multiline()
@@ -74,6 +88,17 @@ class OverlayClient:
             data.location.body_name
         )
         self._location = data.location
+        # ``data.location`` is None when we leave a body (in space) - there is
+        # no surface coordinate to feed the extrapolator. The type checker also
+        # needs this guard narrowed on ``self._location`` before we touch
+        # ``.player_coord`` / ``.radius_meters``.
+        if self._location is not None and self._location.player_coord is not None:
+            self._extrapolator.update_pos(
+                time.time(),
+                self._location.player_coord,
+                self._location.radius_meters or DEFAULT_PLANET_RADIUS,
+            )
+            self._last_real_ts = time.time()
         self._update_navigation()
 
         if had_navigation != will_have_navigation:
@@ -133,48 +158,55 @@ class OverlayClient:
         else:
             return NavigationStatus.APPROACHING
 
-    @staticmethod
-    def format_distance(dist: float) -> str:
-        if dist < 1000:
-            return f"{round(dist)} m"
-        return f"{dist / 1000:.2f} km"
-
-    def _update_navigation(self):
+    def _update_navigation(self, position: SurfacePoint | None = None):
+        # ``position`` overrides the live coordinate for a projected (fake)
+        # update; otherwise we reuse the real player coordinate. Extrapolation
+        # only makes sense while the player has a valid surface coordinate --
+        # if either the location or the coordinate is gone, there is nothing to
+        # navigate.
+        player_coord = (
+            position
+            if position is not None
+            else (self._location.player_coord if self._location else None)
+        )
         if (
             self._destination is None
+            or player_coord is None
             or self._location is None
-            or self._location.player_coord is None
             or self._overlay is None
         ):
             return
 
         dist = NavigationUtils.haversine_distance(
-            self._location.player_coord,
+            player_coord,
             self._destination,
             self._location.radius_meters or DEFAULT_PLANET_RADIUS,
         )
-        status = OverlayClient._get_navigation_status(dist)
-        if status == NavigationStatus.REACHED:
-            # Drop target.
-            self._destination = None
-            # Overlay will show message for given time, than auto hide it.
-            self._overlay.send_message(
-                OverlayClient.MESSAGE_ID,
-                "Target Reached!",
-                self._config.color_reached,
-                self._config.left,
-                self._config.top,
-                OverlayClient.TEXT_TIMEOUT_SEC,
-                self._config.size,
-            )
-            return
+        # A projected (extrapolated) position is only shown -- it must never
+        # drop the active target or fire "Target Reached!". Real updates
+        # (``position is None``) keep that behaviour.
+        if position is None:
+            status = OverlayClient._get_navigation_status(dist)
+            if status == NavigationStatus.REACHED:
+                # Drop target.
+                self._destination = None
+                self._stop_timer()
+                # Overlay will show message for given time, than auto hide it.
+                self._overlay.send_message(
+                    OverlayClient.MESSAGE_ID,
+                    "Target Reached!",
+                    self._config.color_reached,
+                    self._config.left,
+                    self._config.top,
+                    OverlayClient.TEXT_TIMEOUT_SEC,
+                    self._config.size,
+                )
+                return
 
-        bearing = NavigationUtils.calculate_bearing(
-            self._location.player_coord, self._destination
-        )
-        dist_txt = OverlayClient.format_distance(dist)
+        bearing = NavigationUtils.calculate_bearing(player_coord, self._destination)
+        dist_txt = NavigationUtils.format_distance(dist)
         if self.supports_multiline():
-            txt = f"NAVIGATING:\n\tBearing: {bearing:.2f}°\n\tDistance: {dist_txt}"
+            txt = f"NAVIGATING:\n\tBearing: {bearing:.2f}°\n\tDistance: {dist_txt} (surface)"
             self._overlay.send_message(
                 # Using the same ID will replace existing message on overlay and set fresh timeout.
                 OverlayClient.MESSAGE_ID,
@@ -208,7 +240,7 @@ class OverlayClient:
         self._overlay.send_message(
             # Different ID so we don't erase 1st line.
             OverlayClient.MESSAGE_ID + "1",
-            f"Distance: {dist_txt}",
+            f"Distance: {dist_txt} (surface)",
             self._config.color,
             self._config.left + 5,
             self._config.top + 40,  # Estimated vertical size of the 1st line.
@@ -221,7 +253,37 @@ class OverlayClient:
 
     def navigate_to(self, point: SurfacePoint | None):
         self._destination = None
+        self._stop_timer()
         if point is None or not self.is_available():
             return
         self._destination = point
         self._update_navigation()
+        if not self._start_timer():
+            # Navigation is only ever started from a GUI button, so a missing
+            # GUI root here means something got out of order (Buratino?). We
+            # still navigate -- just without the extrapolation timer.
+            logger.warning(
+                "Navigation started without a GUI root -- no extrapolation "
+                "timer (did Buratino break the order again?)."
+            )
+
+    def _start_timer(self) -> bool:
+        """Start the extrapolation timer. Returns False if no GUI root yet."""
+        if self._timer_id is not None or not scheduler.has_gui():
+            return False
+        self._timer_id = scheduler.schedule(1000, self._tick)  # type: ignore
+        return True
+
+    def _stop_timer(self) -> None:
+        if self._timer_id is not None:
+            scheduler.cancel(self._timer_id)
+            self._timer_id = None
+
+    def _tick(self) -> None:
+        if self._destination is not None and (
+            time.time() - self._last_real_ts >= self.STALE_THRESHOLD_SEC
+        ):
+            est = self._extrapolator.extrapolate(time.time(), self._destination)
+            if est is not None:
+                self._update_navigation(position=est)
+        self._timer_id = scheduler.schedule(1000, self._tick)  # type: ignore
