@@ -21,6 +21,7 @@ predicate just points at ``table.column`` and the two tables are always joined.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -49,9 +50,15 @@ class Predicate:
     ``sql`` returns ``(WHERE fragment, params)``; ``describe`` renders the
     human-readable text the UI shows. ``label`` is the category name used both
     in the "add condition" menu and as the blank placeholder.
+
+    ``serial_name`` is the stable string used to (de)serialize the tree to/from
+    JSON for presets and the saved query. ``to_dict``/``from_dict`` implement
+    the round-trip; the top-level :func:`deserialize` looks the class up by
+    ``serial_name`` so the file format never has to import the classes itself.
     """
 
     label: str = "condition"
+    serial_name: str = "predicate"
 
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         raise NotImplementedError
@@ -59,11 +66,34 @@ class Predicate:
     def describe(self) -> str:
         return self.label
 
+    def to_dict(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        raise NotImplementedError
+
+    def __eq__(self, other: object) -> bool:
+        # Structural equality: two predicates are equal when their serialized
+        # trees match. This is what lets Preset/dataclass comparisons and set
+        # membership work without each class re-implementing field checks.
+        if not isinstance(other, Predicate):
+            return NotImplemented
+        return self.to_dict() == other.to_dict()
+
+    def __hash__(self) -> int:
+        # Equal predicates must hash equal. Serializing the tree (keys sorted so
+        # dict ordering never matters) gives one implementation for the whole
+        # class hierarchy -- no per-class weak hashes to keep in sync.
+        return hash(json.dumps(self.to_dict(), sort_keys=True))
+
 
 # ---- Combinators -----------------------------------------------------------
 
 
 class And(Predicate):
+    serial_name = "and"
+
     def __init__(self, *predicates: Predicate) -> None:
         self.predicates = list(predicates)
 
@@ -79,8 +109,20 @@ class And(Predicate):
     def describe(self) -> str:
         return "(" + " AND ".join(p.describe() for p in self.predicates) + ")"
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.serial_name,
+            "children": [p.to_dict() for p in self.predicates],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(*[deserialize(c) for c in data["children"]])
+
 
 class Or(Predicate):
+    serial_name = "or"
+
     def __init__(self, *predicates: Predicate) -> None:
         self.predicates = list(predicates)
 
@@ -96,8 +138,20 @@ class Or(Predicate):
     def describe(self) -> str:
         return "(" + " OR ".join(p.describe() for p in self.predicates) + ")"
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.serial_name,
+            "children": [p.to_dict() for p in self.predicates],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(*[deserialize(c) for c in data["children"]])
+
 
 class Not(Predicate):
+    serial_name = "not"
+
     def __init__(self, predicate: Predicate) -> None:
         self.predicate = predicate
 
@@ -107,6 +161,13 @@ class Not(Predicate):
 
     def describe(self) -> str:
         return f"(NOT {self.predicate.describe()})"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "child": self.predicate.to_dict()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(deserialize(data["child"]))
 
 
 # ---- Surface predicates ----------------------------------------------------
@@ -122,6 +183,7 @@ class Within(Predicate):
     """
 
     label = "distance (km)"
+    serial_name = "within_km"
 
     def __init__(self, distance_km: float | None = None) -> None:
         self.distance_km = distance_km
@@ -130,6 +192,13 @@ class Within(Predicate):
         if self.distance_km is None:
             return self.label
         return f"within {self.distance_km:.1f} km"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "distance_km": self.distance_km}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("distance_km"))
 
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if self.distance_km is None or ctx.player_coord is None:
@@ -169,6 +238,7 @@ class MineralIs(Predicate):
     """
 
     label = "mineral"
+    serial_name = "mineral_is"
 
     def __init__(self, user_input: str | None = None) -> None:
         self.user_input = (user_input or "").strip()
@@ -182,6 +252,13 @@ class MineralIs(Predicate):
             return self.label
         return f"mineral: {self.to_find}"
 
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "user_input": self.user_input}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("user_input"))
+
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if not self.to_find:
             return "1 = 1", []
@@ -194,18 +271,28 @@ class MineralIs(Predicate):
 class HasFlag(Predicate):
     """Base for flag-based predicates.
 
-    Subclasses declare the flag they watch and its label, so the UI only needs
-    ``describe()`` -- no per-flag text to keep in sync.
+    Subclasses declare the flag they watch and its ``serial_name``, so the UI
+    only needs ``describe()`` and serialization needs no per-flag logic.
     """
 
     flag: SurfaceSpotFlags = ...  # type: ignore[assignment]  # set by subclasses
     label: str = "flag"  # set by subclasses
+    serial_name: str = "has_flag"  # set by subclasses
 
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         return "(surface_spots.flags & ?) != 0", [self.flag.value]
 
     def describe(self) -> str:
         return self.label
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        # Look the exact class up by serial_name so the flag bit stays in sync
+        # with the class that owns it -- no per-flag text to keep in sync.
+        return _SERIALIZERS[data["type"]]()
 
 
 class HasTritiumRing(HasFlag):
@@ -217,15 +304,18 @@ class HasTritiumRing(HasFlag):
 
     flag = SurfaceSpotFlags.TRITIUM_RING_PRESENT
     label = "has tritium ring"
+    serial_name = "has_tritium_ring"
 
 
 class IsTemporary(HasFlag):
     flag = SurfaceSpotFlags.IS_TEMPORARY_MARK
     label = "is temporary"
+    serial_name = "is_temporary"
 
 
 class OnBody(Predicate):
     label = "on body"
+    serial_name = "on_body"
 
     def __init__(self, body_name: str | None = None) -> None:
         self.body_name = body_name
@@ -235,10 +325,27 @@ class OnBody(Predicate):
             return self.label
         return f"on {self.body_name}"
 
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "body_name": self.body_name}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("body_name"))
+
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
-        if not self.body_name:
-            return "1 = 1", []
-        return "(surface_spots.body_name = ?)", [self.body_name]
+        # A landing spot sits on a real body: skip empty-body_name rows (bad
+        # data -- the schema is NOT NULL, but "" can be written) and tritium
+        # rings (they live in space, flag set, coords 0/0). The ring exclusion
+        # is what makes "OnBody" mean "where you can land", not "any record".
+        frags: list[str] = [
+            "surface_spots.body_name != ''",
+            "(surface_spots.flags & ?) = 0",
+        ]
+        params: list[object] = [SurfaceSpotFlags.TRITIUM_RING_PRESENT.value]
+        if self.body_name:
+            frags.append("surface_spots.body_name = ?")
+            params.append(self.body_name)
+        return " AND ".join(frags), params
 
 
 # ---- System predicate (distance in space) ----------------------------------
@@ -253,6 +360,7 @@ class WithinLightYears(Predicate):
     """
 
     label = "light-year radius"
+    serial_name = "within_light_years"
 
     def __init__(self, distance_ly: float | None = None) -> None:
         self.distance_ly = distance_ly
@@ -261,6 +369,13 @@ class WithinLightYears(Predicate):
         if self.distance_ly is None:
             return self.label
         return f"within {self.distance_ly:.1f} light-years"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "distance_ly": self.distance_ly}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("distance_ly"))
 
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if self.distance_ly is None or ctx.current_system_coords is None:
@@ -294,3 +409,36 @@ KNOWN_PREDICATES: list[type[Predicate]] = [
     OnBody,
     WithinLightYears,
 ]
+
+
+# ---- Serialization ---------------------------------------------------------
+
+# Stable name -> class, keyed by ``serial_name``. This is what lets a saved
+# query file reconstruct the tree without importing the classes by name, and
+# keeps the flag bit owned by the class that declares it.
+_SERIALIZERS: dict[str, type[Predicate]] = {
+    Within.serial_name: Within,
+    MineralIs.serial_name: MineralIs,
+    HasTritiumRing.serial_name: HasTritiumRing,
+    IsTemporary.serial_name: IsTemporary,
+    OnBody.serial_name: OnBody,
+    WithinLightYears.serial_name: WithinLightYears,
+    And.serial_name: And,
+    Or.serial_name: Or,
+    Not.serial_name: Not,
+}
+
+
+def deserialize(data: dict[str, Any]) -> Predicate:
+    """Reconstruct a predicate tree from its :meth:`Predicate.to_dict` form.
+
+    This is the one-directional half of the (de)serialization pair. The other
+    half is :meth:`Predicate.to_dict` -- every predicate serializes itself, so
+    there is no top-level ``serialize`` to call sites (and no extra call on the
+    hot path): ``query.to_dict()`` serializes, ``deserialize(...)`` restores.
+
+    Raises ``KeyError`` for an unknown ``type`` so a corrupt/foreign file fails
+    loudly on load rather than silently producing an empty query.
+    """
+    cls = _SERIALIZERS[data["type"]]
+    return cls.from_dict(data)

@@ -24,6 +24,7 @@ from surface_navigator.predicates import (
     QueryContext,
     Within,
     WithinLightYears,
+    deserialize,
 )
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
@@ -143,13 +144,23 @@ def test_is_temporary_sql():
 
 def test_on_body_sql():
     frag, params = OnBody("Earth").sql(_ctx())
-    assert frag == "(surface_spots.body_name = ?)"
-    assert params == ["Earth"]
+    # body filter plus the two standing exclusions (empty body, tritium ring).
+    assert frag == (
+        "surface_spots.body_name != '' "
+        "AND (surface_spots.flags & ?) = 0 "
+        "AND surface_spots.body_name = ?"
+    )
+    assert params == [SurfaceSpotFlags.TRITIUM_RING_PRESENT.value, "Earth"]
 
 
-def test_on_body_unset_matches_all():
-    frag, _ = OnBody(None).sql(_ctx())
-    assert frag == "1 = 1"
+def test_on_body_unset_matches_landing_spots():
+    # Even unfilled, OnBody means "landing spot" -- rings and empty-body rows
+    # are excluded, so it is not a bare "match everything".
+    frag, params = OnBody(None).sql(_ctx())
+    assert frag == (
+        "surface_spots.body_name != '' AND (surface_spots.flags & ?) = 0"
+    )
+    assert params == [SurfaceSpotFlags.TRITIUM_RING_PRESENT.value]
 
 
 # ---- WithinLightYears (euclidean SQL) --------------------------------------
@@ -184,8 +195,8 @@ def test_and_combines_and_collects_params():
     frag, params = And(OnBody("Earth"), Within(10.0)).sql(ctx)
     assert frag.startswith("(")
     assert " AND " in frag
-    # OnBody: 1 param, Within: 6 params
-    assert len(params) == 7
+    # OnBody: 2 params (ring flag + body), Within: 6 params
+    assert len(params) == 8
 
 
 def test_or_combines_with_or():
@@ -216,3 +227,47 @@ def test_known_predicates_are_classes_with_describe():
         blank = cls()
         assert isinstance(blank.describe(), str)
         assert blank.describe()  # non-empty
+
+
+# ---- Serialization round-trip ----------------------------------------------
+# ``Predicate.__eq__`` compares by serialized structure, so a faithful
+# round-trip reproduces an equal predicate -- we assert that directly.
+
+
+def test_leaf_within_roundtrip():
+    q = Within(12.5)
+    assert deserialize(q.to_dict()) == q
+
+
+def test_leaf_mineral_roundtrip():
+    q = MineralIs("Iridium")
+    assert deserialize(q.to_dict()) == q
+
+
+def test_leaf_on_body_roundtrip():
+    q = OnBody("Earth")
+    assert deserialize(q.to_dict()) == q
+
+
+def test_leaf_flags_roundtrip():
+    assert deserialize(HasTritiumRing().to_dict()) == HasTritiumRing()
+    assert deserialize(IsTemporary().to_dict()) == IsTemporary()
+
+
+def test_leaf_within_light_years_roundtrip():
+    q = WithinLightYears(100.0)
+    assert deserialize(q.to_dict()) == q
+
+
+def test_combinators_roundtrip():
+    q = And(
+        Or(HasTritiumRing(), MineralIs("tritium")),
+        Not(WithinLightYears(50.0)),
+        OnBody("Kepler-442 b"),
+    )
+    assert deserialize(q.to_dict()) == q
+
+
+def test_unknown_type_raises_keyerror():
+    with pytest.raises(KeyError):
+        deserialize({"type": "not_a_real_predicate"})

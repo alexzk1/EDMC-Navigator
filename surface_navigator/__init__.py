@@ -6,20 +6,20 @@ preserved.
 """
 
 from .load import (
-    logger,
     SurfaceNavigatorPlugin,
     dashboard_entry,
     journal_entry,
+    logger,
     plugin_app,
     plugin_start3,
     shutdown,
 )
 
 __all__ = [
-    "logger",
     "SurfaceNavigatorPlugin",
     "dashboard_entry",
     "journal_entry",
+    "logger",
     "plugin_app",
     "plugin_start3",
     "shutdown",

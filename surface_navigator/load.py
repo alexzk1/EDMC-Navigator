@@ -15,6 +15,7 @@ try:
     from .nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from .overlay_client import OverlayClient
     from .player_location import PlayerLocation, SurfacePoint, in_game_timestamp
+    from .presets import PresetManager
     from .rhino_db_updater import RhinoMiningDbUpdater
     from .spot_flags import SurfaceSpotFlags
     from .status_flags import StatusFlags
@@ -36,6 +37,7 @@ except ImportError:
     from nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from overlay_client import OverlayClient
     from player_location import PlayerLocation, SurfacePoint, in_game_timestamp
+    from presets import PresetManager
     from rhino_db_updater import RhinoMiningDbUpdater
     from spot_flags import SurfaceSpotFlags
     from status_flags import StatusFlags
@@ -48,6 +50,12 @@ class SurfaceNavigatorPlugin:
     def __init__(self, plugin_dir: str):
         db_path = resolve_db_path(plugin_dir)
         self.db_manager = DatabaseManager(db_path)
+
+        # User presets live next to the DB (same app_dir/plugin_dir fallback).
+        presets_path = os.path.join(
+            os.path.dirname(db_path), "surface_navigator_presets.json"
+        )
+        self.preset_manager = PresetManager(presets_path)
 
         # Sweep expired temporary marks (gc_temporaries). Cheap: sub-ms even on
         # thousands of rows, so safe to run at startup.

@@ -799,6 +799,17 @@ def _tritium_ring_spot(system: str, body: str) -> SurfaceSpot:
     )
 
 
+def test_query_spots_on_body_excludes_rings_and_empty_bodies(db: DatabaseManager):
+    """OnBody matches landing spots only -- not tritium rings (flag set,
+    coords 0/0) and not empty-body rows (bad data / stars in the other table)."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_tritium_ring_spot("Alpha", "B 3 Ring"))
+    db.add_spot(_spot("Alpha", "", 0.0, 0.0, "iron"))
+
+    result = db.query_spots(OnBody("b1"), QueryContext(), system="Alpha")
+    assert [(sp.star_system, sp.body_name) for sp in result] == [("Alpha", "b1")]
+
+
 # ---- resolve_db_path -------------------------------------------------------
 
 
