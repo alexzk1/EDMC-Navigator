@@ -22,8 +22,12 @@ from surface_navigator.predicates import (
     Or,
     Predicate,
     QueryContext,
+    SearchInCurrentSystem,
+    SearchInExactSystem,
+    StarNotFoundError,
     Within,
     WithinLightYears,
+    WithinLightYearsOfStar,
     deserialize,
 )
 from surface_navigator.spot_flags import SurfaceSpotFlags
@@ -187,6 +191,92 @@ def test_within_light_years_describes():
     assert WithinLightYears(None).describe() == "light-year radius"
 
 
+def test_within_light_years_references_no_star():
+    # The current star is always known, so the predicate names no centre.
+    assert WithinLightYears(100.0).referenced_stars() == set()
+
+
+# ---- WithinLightYearsOfStar (named-star variant) ---------------------------
+
+
+def test_within_light_years_of_star_sql():
+    ctx = _ctx(current_system_coords=(0.0, 0.0, 0.0), star_coords={"Sol": (1.0, 2.0, 3.0)})
+    frag, params = WithinLightYearsOfStar(50.0, "Sol").sql(ctx)
+    assert "star_systems.x" in frag
+    # x0, x0, y0, y0, z0, z0, dist_sq
+    assert len(params) == 7
+    assert params[:6] == [1.0, 1.0, 2.0, 2.0, 3.0, 3.0]
+    assert params[6] == 50.0**2
+
+
+def test_within_light_years_of_star_missing_star_raises():
+    # The engine is supposed to resolve the star first; a missing centre here
+    # is a loud failure, not a silent no-match.
+    with pytest.raises(StarNotFoundError):
+        WithinLightYearsOfStar(50.0, "Kepler-442").sql(_ctx())
+
+
+def test_within_light_years_of_star_unset_matches_all():
+    assert WithinLightYearsOfStar(None, "Sol").sql(_ctx()) == ("1 = 1", [])
+    assert WithinLightYearsOfStar(50.0, None).sql(_ctx()) == ("1 = 1", [])
+
+
+def test_within_light_years_of_star_describes():
+    assert WithinLightYearsOfStar(50.0, "Sol").describe() == "within 50.0 ly of Sol"
+    assert WithinLightYearsOfStar(None, "Sol").describe() == "light-year radius (star)"
+
+
+def test_within_light_years_of_star_references_name():
+    assert WithinLightYearsOfStar(50.0, "Sol").referenced_stars() == {"Sol"}
+    assert WithinLightYearsOfStar(50.0, None).referenced_stars() == set()
+
+
+def test_within_light_years_of_star_roundtrip():
+    q = WithinLightYearsOfStar(100.0, "Sol")
+    assert deserialize(q.to_dict()) == q
+
+
+# ---- System-scope predicates (exact name) ----------------------------------
+
+
+def test_search_in_exact_system_sql():
+    frag, params = SearchInExactSystem("Sol").sql(_ctx())
+    assert frag == "star_systems.star_name = ?"
+    assert params == ["Sol"]
+
+
+def test_search_in_exact_system_unset_matches_all():
+    assert SearchInExactSystem(None).sql(_ctx()) == ("1 = 1", [])
+
+
+def test_search_in_exact_system_describes():
+    assert SearchInExactSystem("Sol").describe() == "in Sol"
+    assert SearchInExactSystem(None).describe() == "system (exact name)"
+
+
+def test_search_in_exact_system_roundtrip():
+    q = SearchInExactSystem("Sol")
+    assert deserialize(q.to_dict()) == q
+
+
+def test_search_in_current_system_uses_current_name():
+    frag, params = SearchInCurrentSystem().sql(_ctx(current_system_name="Sol"))
+    assert frag == "star_systems.star_name = ?"
+    assert params == ["Sol"]
+
+
+def test_search_in_current_system_unset_matches_all():
+    assert SearchInCurrentSystem().sql(_ctx(current_system_name=None)) == ("1 = 1", [])
+
+
+def test_search_in_current_system_describes():
+    assert SearchInCurrentSystem().describe() == "current system"
+
+
+def test_search_in_current_system_roundtrip():
+    assert deserialize(SearchInCurrentSystem().to_dict()) == SearchInCurrentSystem()
+
+
 # ---- Combinators -----------------------------------------------------------
 
 
@@ -216,6 +306,18 @@ def test_combinator_describe():
     text = q.describe()
     assert "AND" in text
     assert "NOT" in text
+
+
+def test_referenced_stars_aggregates_across_tree():
+    # A named-star search nested in an AND/OR/Not exposes its star so the
+    # engine can resolve it; ordinary predicates contribute nothing.
+    star = WithinLightYearsOfStar(50.0, "Sol")
+    assert star.referenced_stars() == {"Sol"}
+    q = And(
+        Or(WithinLightYearsOfStar(50.0, "Sol"), OnBody("Kepler-442 b")),
+        Not(WithinLightYears(100.0)),
+    )
+    assert q.referenced_stars() == {"Sol"}
 
 
 # ---- Registry --------------------------------------------------------------

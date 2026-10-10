@@ -2,13 +2,22 @@ import logging
 import math
 import os
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import RingScanStatus, StarSystem, SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
-from .predicates import Predicate, QueryContext
+from .predicates import Predicate, QueryContext, StarNotFoundError
 from .spot_flags import SurfaceSpotFlags
+
+# Resolves a named star for a star-scoped search. The resolver is a pure
+# side-effecting callback with **no return value**: its only contract is to
+# fetch the star (coordinates, plus anything attached -- e.g. tritium rings) and
+# persist it into the DB. The engine never reads anything back from the call --
+# it simply re-queries the DB afterwards, so the search that failed before the
+# resolver now succeeds. See ``_resolve_referenced_stars``.
+StarResolver = Callable[[str], None]
 
 logger = logging.getLogger("SurfaceNavigator")
 
@@ -604,6 +613,7 @@ class DatabaseManager:
         ctx: QueryContext,
         system: str | None = None,
         allow_unbounded: bool = False,
+        star_resolver: StarResolver | None = None,
     ) -> list[SurfaceSpot]:
         """Runs a predicate tree and returns the matching ``SurfaceSpot`` rows.
 
@@ -615,10 +625,22 @@ class DatabaseManager:
         Always returns ``SurfaceSpot`` rows: the INNER JOIN to ``star_systems``
         drops any star with no spots, and every tritium ring is itself a spot.
 
+        Star-scoped predicates (``WithinLightYearsOfStar``) name a centre star
+        whose coordinates must exist in the DB before the search can run. If a
+        centre star is unknown, ``star_resolver`` is invoked to fetch and
+        persist it online (a side effect with no return value); the lookup is
+        then retried. With no resolver a missing centre star is a hard
+        :class:`StarNotFoundError`.
+
         Raises ``ValueError`` for an effectively unbounded query -- one with no
         system scope and no predicate that produces a parameter -- unless
         ``allow_unbounded`` is set. Such a query would scan the whole table.
+
+        Raises ``StarNotFoundError`` if a referenced centre star has no
+        coordinates and the resolver cannot supply any.
         """
+        self._resolve_referenced_stars(predicate, ctx, star_resolver)
+
         fragment, params = predicate.sql(ctx)
 
         where_parts: list[str] = []
@@ -639,6 +661,56 @@ class DatabaseManager:
         sql = f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} {where_sql}ORDER BY surface_spots.id"
         with self._get_connection() as conn:
             return self._fetch_select_cursor(conn.execute(sql, where_params))
+
+    def _lookup_star_coords(self, star_name: str) -> tuple[float, float, float] | None:
+        """Look up a star's (x, y, z) in the local DB, or None if unknown."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT x, y, z FROM star_systems WHERE star_name = ?", (star_name,)
+            ).fetchone()
+        return tuple(row) if row else None
+
+    def _resolve_referenced_stars(
+        self,
+        predicate: Predicate,
+        ctx: QueryContext,
+        star_resolver: StarResolver | None,
+        max_attempts: int = 3,
+    ) -> None:
+        """Populate ``ctx.star_coords`` for every star the tree centers on.
+
+        A star-scoped predicate names a centre star whose coordinates must exist
+        in the DB before the search can run. Each referenced star is looked up
+        first; if it is still unknown the ``star_resolver`` callback is invoked.
+
+        The resolver is a pure side effect: it has **no return value**. Its only
+        contract is to fetch the star (coordinates, plus anything attached --
+        e.g. tritium rings) from an online source and persist it into the DB. It
+        runs **outside any transaction** so its writes commit independently.
+        After the call we simply re-run the same ``SELECT`` -- the search that
+        failed before the resolver now succeeds because the data is there. The
+        bounded retry loop covers a resolver that discovers several stars across
+        successive calls.
+        """
+        for _ in range(max_attempts):
+            unresolved = [
+                name
+                for name in predicate.referenced_stars()
+                if name not in ctx.star_coords
+            ]
+            if not unresolved:
+                return
+            for name in unresolved:
+                coords = self._lookup_star_coords(name)
+                if coords is None and star_resolver is not None:
+                    # No return value: the resolver's only contract is to
+                    # persist the data into the DB. Re-query to pick up what it
+                    # wrote rather than trusting anything else.
+                    star_resolver(name)
+                    coords = self._lookup_star_coords(name)
+                if coords is None:
+                    raise StarNotFoundError(name)
+                ctx.star_coords[name] = coords
 
     # TODO (follow-up): many read methods here are just ``query_spots`` with a
     # specific predicate, so the engine could own them and we can delete the

@@ -28,7 +28,11 @@ from surface_navigator.predicates import (
     MineralIs,
     OnBody,
     QueryContext,
+    SearchInCurrentSystem,
+    SearchInExactSystem,
+    StarNotFoundError,
     WithinLightYears,
+    WithinLightYearsOfStar,
 )
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
@@ -787,6 +791,140 @@ def test_query_spots_combines_predicates(db: DatabaseManager):
         system="Alpha",
     )
     assert [(sp.star_system, sp.body_name) for sp in result] == [("Alpha", "b2")]
+
+
+# ---- query_spots star resolution (WithinLightYearsOfStar) ------------------
+
+
+def test_query_spots_resolves_star_from_db(db: DatabaseManager):
+    """A named-star search resolves the centre from the local DB."""
+    # "Sol" is near the origin; "Kepler-442" is far away.
+    _add_coorded(db, "Sol", 1.0, 0.0, 0.0)
+    _add_coorded(db, "Kepler-442", 1000.0, 1000.0, 1000.0)
+
+    result = db.query_spots(WithinLightYearsOfStar(50.0, "Sol"), QueryContext())
+    assert [sp.star_system for sp in result] == ["Sol"]
+
+
+def test_query_spots_star_not_in_db_raises(db: DatabaseManager):
+    """A centre star with no coordinates and no resolver is a hard failure."""
+    _add_coorded(db, "Sol", 1.0, 0.0, 0.0)
+    with pytest.raises(StarNotFoundError):
+        db.query_spots(WithinLightYearsOfStar(50.0, "Kepler-442"), QueryContext())
+
+
+def test_query_spots_star_resolver_persists_coords(db: DatabaseManager):
+    """A resolver persists coordinates into the DB; the search re-queries them.
+
+    The resolver has no return value -- its only contract is to write the data
+    into the DB. The engine reads the coords back from there, not from the call.
+    """
+
+    def resolver(name: str):
+        # "Kepler-442" is unknown to the DB; persist it (star + a spot) online.
+        db._get_or_create_star(  # type: ignore
+            StarSystem(star_name=name, x=0.5, y=0.0, z=0.0)
+        )
+        _add_coorded(db, name, 0.5, 0.0, 0.0)
+
+    result = db.query_spots(
+        WithinLightYearsOfStar(50.0, "Kepler-442"),
+        QueryContext(),
+        star_resolver=resolver,
+    )
+    assert [sp.star_system for sp in result] == ["Kepler-442"]
+
+
+def test_query_spots_resolver_can_insert_then_retry(db: DatabaseManager):
+    """A resolver that persists data into the DB is picked up on the retry."""
+
+    def resolver(name: str):
+        if name == "Kepler-442":
+            # Simulate an online lookup inserting the star + its spots back into
+            # the DB. No return value -- the DB is the source of truth.
+            db._get_or_create_star(  # type: ignore
+                StarSystem(star_name=name, x=0.25, y=0.0, z=0.0)
+            )
+            _add_coorded(db, name, 0.25, 0.0, 0.0)
+
+    result = db.query_spots(
+        WithinLightYearsOfStar(50.0, "Kepler-442"),
+        QueryContext(),
+        star_resolver=resolver,
+    )
+    assert [sp.star_system for sp in result] == ["Kepler-442"]
+
+
+# ---- query_spots system-scope predicates (exact name) ----------------------
+
+
+def test_query_spots_search_in_exact_system(db: DatabaseManager):
+    """A named-system predicate scopes the search to that system by name."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+    db.add_spot(_spot("Beta", "b3", 12.0, 22.0, "silver"))
+
+    result = db.query_spots(SearchInExactSystem("Beta"), QueryContext())
+    assert [sp.star_system for sp in result] == ["Beta", "Beta"]
+
+
+def test_query_spots_search_in_exact_system_composes(db: DatabaseManager):
+    """A named-system predicate ANDs with a surface predicate."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Alpha", "b2", 11.0, 21.0, "silver"))
+    db.add_spot(_spot("Beta", "b3", 12.0, 22.0, "iron"))
+
+    result = db.query_spots(
+        And(SearchInExactSystem("Alpha"), MineralIs("silver")),
+        QueryContext(),
+    )
+    assert [(sp.star_system, sp.mineral_type) for sp in result] == [("Alpha", "silver")]
+
+
+def test_query_spots_search_in_exact_system_triggers_resolver(db: DatabaseManager):
+    """An exact-system search names the system, so an unknown system is fetched
+    online by the resolver -- the search succeeds transparently.
+
+    This is the "online search without an explicit online request" path: the
+    resolver persists the star (and, in production, its tritium rings) and the
+    same exact-name query then matches.
+    """
+
+    def resolver(name: str):
+        if name == "Kepler-442":
+            db._get_or_create_star(  # type: ignore
+                StarSystem(star_name=name, x=0.5, y=0.0, z=0.0)
+            )
+            _add_coorded(db, name, 0.5, 0.0, 0.0)
+
+    result = db.query_spots(
+        SearchInExactSystem("Kepler-442"), QueryContext(), star_resolver=resolver
+    )
+    assert [sp.star_system for sp in result] == ["Kepler-442"]
+
+
+def test_query_spots_search_in_current_system(db: DatabaseManager):
+    """The current-system predicate scopes to ``ctx.current_system_name``."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+
+    result = db.query_spots(
+        SearchInCurrentSystem(), QueryContext(current_system_name="Beta")
+    )
+    assert [sp.star_system for sp in result] == ["Beta"]
+
+
+def test_query_spots_search_in_current_system_unset_matches_all(db: DatabaseManager):
+    """With no current system known, the current-system predicate imposes no
+    system restriction -- so it spans every system. It is still an effectively
+    unbounded query on its own, hence ``allow_unbounded``."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+
+    result = db.query_spots(
+        SearchInCurrentSystem(), QueryContext(), allow_unbounded=True
+    )
+    assert {sp.star_system for sp in result} == {"Alpha", "Beta"}
 
 
 def _tritium_ring_spot(system: str, body: str) -> SurfaceSpot:
