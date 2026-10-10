@@ -14,12 +14,21 @@ import os
 import tempfile
 import time
 from collections.abc import Iterator
+from unittest.mock import patch
 
 import pytest
 
 from surface_navigator.database import DatabaseManager
 from surface_navigator.models import RingScanStatus, StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
+from surface_navigator.predicates import (
+    And,
+    HasTritiumRing,
+    MineralIs,
+    OnBody,
+    QueryContext,
+    WithinLightYears,
+)
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
 
@@ -38,6 +47,18 @@ def db_path() -> Iterator[str]:
 @pytest.fixture()
 def db(db_path: str) -> DatabaseManager:
     return DatabaseManager(db_path)
+
+
+@pytest.fixture(autouse=True)
+def _stub_commodities():
+    """The commodity CSV is not present in the test env, so ``resolve_db_value``
+    cannot load. Stub it to a safe default (fuzzy fails -> raw input); tests
+    that need a specific value patch it again inside their own context."""
+    with patch(
+        "surface_navigator.predicates.Commodities.resolve_db_value",
+        return_value=None,
+    ):
+        yield
 
 
 def _spot(
@@ -175,7 +196,7 @@ def test_flags_set_and_read_back(db: DatabaseManager):
 def test_flags_coerced_from_int_in_model():
     # The DB hands back a plain int; the model must normalise it to the enum.
     flag_val = SurfaceSpotFlags.IS_TEMPORARY_MARK.value
-    spot = SurfaceSpot(flags=flag_val)
+    spot = SurfaceSpot(flags=flag_val)  # type: ignore
     assert isinstance(spot.flags, SurfaceSpotFlags)
     assert spot.flags.value == flag_val
 
@@ -655,23 +676,123 @@ def test_update_existing_star_coords_only_fills_missing(db: DatabaseManager):
     with db._get_connection() as conn:  # type: ignore
         conn.execute("INSERT INTO star_systems (star_name, x) VALUES ('Beta', 1.0)")
     # A later jump fills only the still-NULL columns, leaving x untouched.
-    assert db.update_existing_star_coords(
-        StarSystem(star_name="Beta", x=9.0, y=2.0, z=3.0)
-    ) == 2
+    assert (
+        db.update_existing_star_coords(
+            StarSystem(star_name="Beta", x=9.0, y=2.0, z=3.0)
+        )
+        == 2
+    )
     assert _star_coords(db, "Beta") == (1.0, 2.0, 3.0)
 
 
 def test_update_existing_star_coords_no_op_when_complete(db: DatabaseManager):
     db.add_spot(_spot("Gamma", "Kepler-231 d", 0.0, 0.0))
     db.update_existing_star_coords(StarSystem(star_name="Gamma", x=1.0, y=2.0, z=3.0))
-    assert db.update_existing_star_coords(
-        StarSystem(star_name="Gamma", x=4.0, y=5.0, z=6.0)
-    ) == 0
+    assert (
+        db.update_existing_star_coords(
+            StarSystem(star_name="Gamma", x=4.0, y=5.0, z=6.0)
+        )
+        == 0
+    )
 
 
 def test_update_existing_star_coords_never_creates(db: DatabaseManager):
     # Systems we merely fly through are left alone - no row, no spots.
-    assert db.update_existing_star_coords(
-        StarSystem(star_name="Nowhere", x=1.0, y=2.0, z=3.0)
-    ) == 0
+    assert (
+        db.update_existing_star_coords(
+            StarSystem(star_name="Nowhere", x=1.0, y=2.0, z=3.0)
+        )
+        == 0
+    )
     assert _star_row_count(db, "Nowhere") == 0
+
+
+# ---- query_spots (predicate engine) ----------------------------------------
+
+
+def _add_coorded(db: DatabaseManager, system: str, x: float, y: float, z: float):
+    """Adds a spot in ``system`` with explicit coordinates (far from origin)."""
+    star_id = db._get_or_create_star(StarSystem(star_name=system, x=x, y=y, z=z))  # type: ignore
+    with db._get_connection() as conn:  # type: ignore
+        conn.execute(
+            "INSERT INTO surface_spots "
+            "(star_id, body_name, latitude, longitude, mineral_type, mineral_original) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (star_id, "b", 0.0, 0.0, "iron", "iron"),
+        )
+
+
+def test_query_spots_scoped_to_system(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+    result = db.query_spots(MineralIs("iron"), QueryContext(), system="Alpha")
+    assert [sp.star_system for sp in result] == ["Alpha"]
+
+
+def test_query_spots_unbounded_raises(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    with pytest.raises(ValueError):
+        db.query_spots(MineralIs(None), QueryContext())  # no scope, no real filter
+
+
+def test_query_spots_bounded_by_predicate(db: DatabaseManager):
+    """A predicate that produces a parameter is bounded even without a scope."""
+    db.add_spot(_tritium_ring_spot("Alpha", "B 5 A Ring"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+    # HasTritiumRing filters to rings -> bounded, no system scope needed.
+    result = db.query_spots(HasTritiumRing(), QueryContext())
+    assert [sp.star_system for sp in result] == ["Alpha"]
+
+
+def test_query_spots_allow_unbounded(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+    result = db.query_spots(MineralIs(None), QueryContext(), allow_unbounded=True)
+    assert len(result) == 2
+
+
+def test_query_spots_within_light_years_includes_null_coords(db: DatabaseManager):
+    """A system with NULL coordinates fits any radius (better show than miss)."""
+    # "Alpha" gets NULL coords (add_spot creates the star row without coords).
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    # "Beta" gets explicit coords far away (~1732 ly from the origin).
+    _add_coorded(db, "Beta", 1000.0, 1000.0, 1000.0)
+
+    ctx = QueryContext(current_system_coords=(0.0, 0.0, 0.0))
+    result = db.query_spots(WithinLightYears(100.0), ctx)
+    # NULL-coord "Alpha" matches any radius; far-away "Beta" does not.
+    assert {sp.star_system for sp in result} == {"Alpha"}
+
+
+def test_query_spots_within_light_years_matches_by_distance(db: DatabaseManager):
+    """A system within the radius is matched by euclidean distance."""
+    _add_coorded(db, "Beta", 1.0, 2.0, 2.0)  # distance = sqrt(9) = 3 ly
+    _add_coorded(db, "Gamma", 10.0, 10.0, 10.0)  # ~17 ly, out of range
+
+    ctx = QueryContext(current_system_coords=(0.0, 0.0, 0.0))
+    result = db.query_spots(WithinLightYears(10.0), ctx)
+    assert {sp.star_system for sp in result} == {"Beta"}
+
+
+def test_query_spots_combines_predicates(db: DatabaseManager):
+    """AND-combined predicates restrict to the intersection."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Alpha", "b2", 11.0, 21.0, "iron"))
+    db.add_spot(_spot("Beta", "b3", 12.0, 22.0, "silver"))
+
+    result = db.query_spots(
+        And(MineralIs("iron"), OnBody("b2")),
+        QueryContext(),
+        system="Alpha",
+    )
+    assert [(sp.star_system, sp.body_name) for sp in result] == [("Alpha", "b2")]
+
+
+def _tritium_ring_spot(system: str, body: str) -> SurfaceSpot:
+    return SurfaceSpot(
+        star_system=system,
+        body_name=body,
+        latitude=0.0,
+        longitude=0.0,
+        flags=SurfaceSpotFlags.TRITIUM_RING_PRESENT,
+    )

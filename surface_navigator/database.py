@@ -6,6 +6,7 @@ from typing import Any
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import RingScanStatus, StarSystem, SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
+from .predicates import Predicate, QueryContext
 from .spot_flags import SurfaceSpotFlags
 
 logger = logging.getLogger("SurfaceNavigator")
@@ -562,3 +563,56 @@ class DatabaseManager:
                 ),
             )
             return self._fetch_select_cursor(cursor)
+
+    def query_spots(
+        self,
+        predicate: Predicate,
+        ctx: QueryContext,
+        system: str | None = None,
+        allow_unbounded: bool = False,
+    ) -> list[SurfaceSpot]:
+        """Runs a predicate tree and returns the matching ``SurfaceSpot`` rows.
+
+        The tree is rendered to a single parameterized WHERE fragment -- all the
+        filtering happens inside SQLite. When ``system`` is given the query is
+        scoped to that system; otherwise it spans every system (regional,
+        light-year searches).
+
+        Always returns ``SurfaceSpot`` rows: the INNER JOIN to ``star_systems``
+        drops any star with no spots, and every tritium ring is itself a spot.
+
+        Raises ``ValueError`` for an effectively unbounded query -- one with no
+        system scope and no predicate that produces a parameter -- unless
+        ``allow_unbounded`` is set. Such a query would scan the whole table.
+        """
+        fragment, params = predicate.sql(ctx)
+
+        where_parts: list[str] = []
+        where_params: list[object] = []
+        if fragment and fragment != "1 = 1":
+            where_parts.append(f"({fragment})")
+            where_params.extend(params)
+        if system:
+            where_parts.append("star_systems.star_name = ?")
+            where_params.append(system)
+
+        if not where_parts and not allow_unbounded:
+            raise ValueError(
+                "query has no restriction; scope it to a system or add a predicate"
+            )
+
+        where_sql = f"WHERE {' AND '.join(where_parts)} " if where_parts else ""
+        sql = f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} {where_sql}ORDER BY surface_spots.id"
+        with self._get_connection() as conn:
+            return self._fetch_select_cursor(conn.execute(sql, where_params))
+
+    # TODO (follow-up): many read methods here are just ``query_spots`` with a
+    # specific predicate, so the engine could own them and we can delete the
+    # duplicates. Callers above only use: get_system_spots, get_planetary_spots,
+    # get_all_spots, find_by_mineral. Suggested rewrites:
+    #   get_system_spots(s)      -> query_spots(<match-all>, system=s)
+    #   get_planetary_spots(loc) -> query_spots(OnBody(loc.body_name), system=loc.star_name)
+    #   get_all_spots()          -> query_spots(<match-all>, allow_unbounded=True)
+    #   find_by_mineral(m)       -> query_spots(MineralIs(m), allow_unbounded=True)
+    # (find_incomplete_surface_mining_spot / update_visit_time stay: they need
+    # ORDER BY distance + LIMIT 1, which the engine does not express.)

@@ -267,11 +267,15 @@ class WithinLightYears(Predicate):
             return "1 = 1", []
         x0, y0, z0 = ctx.current_system_coords
         dist_sq = self.distance_ly**2
+        # A system with any missing coordinate cannot have a distance computed,
+        # so it fits *any* radius -- better to show it than to drop it.
         return (
             (
+                "(star_systems.x IS NULL OR star_systems.y IS NULL OR "
+                "star_systems.z IS NULL OR "
                 "((star_systems.x - ?) * (star_systems.x - ?) + "
                 "(star_systems.y - ?) * (star_systems.y - ?) + "
-                "(star_systems.z - ?) * (star_systems.z - ?)) <= ?"
+                "(star_systems.z - ?) * (star_systems.z - ?)) <= ?)"
             ),
             [x0, x0, y0, y0, z0, z0, dist_sq],
         )
