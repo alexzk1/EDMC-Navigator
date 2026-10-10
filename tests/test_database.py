@@ -11,6 +11,7 @@ Every test DB is created in ``/tmp`` so the repo stays clean (see the
 import datetime
 import math
 import os
+import pathlib
 import tempfile
 import time
 from collections.abc import Iterator
@@ -18,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from surface_navigator.database import DatabaseManager
+from surface_navigator.database import DatabaseManager, resolve_db_path
 from surface_navigator.models import RingScanStatus, StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.predicates import (
@@ -796,3 +797,63 @@ def _tritium_ring_spot(system: str, body: str) -> SurfaceSpot:
         longitude=0.0,
         flags=SurfaceSpotFlags.TRITIUM_RING_PRESENT,
     )
+
+
+# ---- resolve_db_path -------------------------------------------------------
+
+
+def _touch(path: str) -> None:
+    """Create an empty file at ``path`` (and its parent dir)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("")
+
+
+def test_resolve_db_path_prefers_existing_app_dir():
+    """A DB already in the app-data dir wins over plugin_dir."""
+    from config import config as config_stub
+
+    with (
+        tempfile.TemporaryDirectory() as app_dir,
+        tempfile.TemporaryDirectory() as plugin_dir,
+    ):
+        app_db = os.path.join(app_dir, "surface_navigator.db")
+        plugin_db = os.path.join(plugin_dir, "surface_navigator.db")
+        _touch(app_db)
+        _touch(plugin_db)
+
+        with patch.object(config_stub, "app_dir_path", new=pathlib.Path(app_dir)):
+            result = resolve_db_path(plugin_dir)
+        assert result == app_db
+
+
+def test_resolve_db_path_falls_back_to_plugin_dir():
+    """No DB in app_dir, but one in plugin_dir -> keep the existing one."""
+    from config import config as config_stub
+
+    with (
+        tempfile.TemporaryDirectory() as app_dir,
+        tempfile.TemporaryDirectory() as plugin_dir,
+    ):
+        plugin_db = os.path.join(plugin_dir, "surface_navigator.db")
+        _touch(plugin_db)
+        # app_dir exists but holds no DB.
+
+        with patch.object(config_stub, "app_dir_path", new=pathlib.Path(app_dir)):
+            result = resolve_db_path(plugin_dir)
+        assert result == plugin_db
+
+
+def test_resolve_db_path_new_install_uses_app_dir():
+    """No DB anywhere -> a new install lands in the app-data dir."""
+    from config import config as config_stub
+
+    with (
+        tempfile.TemporaryDirectory() as app_dir,
+        tempfile.TemporaryDirectory() as plugin_dir,
+    ):
+        # Neither directory has a DB yet.
+
+        with patch.object(config_stub, "app_dir_path", new=pathlib.Path(app_dir)):
+            result = resolve_db_path(plugin_dir)
+        assert result == os.path.join(app_dir, "surface_navigator.db")

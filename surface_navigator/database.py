@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 import sqlite3
 from typing import Any
 
@@ -10,6 +11,39 @@ from .predicates import Predicate, QueryContext
 from .spot_flags import SurfaceSpotFlags
 
 logger = logging.getLogger("SurfaceNavigator")
+
+
+def resolve_db_path(plugin_dir: str) -> str:
+    """Resolves the on-disk path of the surface navigator DB.
+
+    Resolution order (so an existing database is never lost):
+
+    1. ``config.app_dir_path`` -- the proper EDMC app-data dir (e.g.
+       ``~/.local/share/EDMarketConnector`` on Linux). Used for brand-new
+       installs.
+    2. ``plugin_dir`` -- kept for existing installs whose DB already lives next
+       to the plugin code.
+    3. If neither holds a DB yet, it is a new install -> create in
+       ``app_dir_path``.
+
+    ``config`` is imported lazily because it is an EDMC-only module (stubbed in
+    tests), so importing it at module top would break standalone test runs.
+    """
+    db_name = "surface_navigator.db"
+    from config import config  # EDMC-only; kept local so tests don't need it
+
+    app_dir = getattr(config, "app_dir_path", None)
+    app_path = os.path.join(str(app_dir), db_name) if app_dir else None
+    plugin_path = os.path.join(plugin_dir, db_name)
+
+    if app_path and os.path.isfile(app_path):
+        return app_path
+    if plugin_path and os.path.isfile(plugin_path):
+        return plugin_path
+
+    # Nothing found yet: a new install lands in the app-data dir when available.
+    return app_path or plugin_path
+
 
 # Surface spots live in their own table but reference a normalized
 # ``star_systems`` table via ``star_id``. Every read reconstructs the

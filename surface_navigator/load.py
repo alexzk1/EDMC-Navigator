@@ -5,7 +5,7 @@ from typing import Any
 
 # Import components from within our plugin package
 try:
-    from .database import DatabaseManager
+    from .database import DatabaseManager, resolve_db_path
     from .events_dispatcher import EventParams, KnownEvents, dispatcher
     from .events_suppression_zone import surface_scan_suppression_manager
     from .main_gui_widget import MainGUIWidget
@@ -26,7 +26,7 @@ except ImportError:
     if current_dir not in sys.path:
         sys.path.append(current_dir)
 
-    from database import DatabaseManager
+    from database import DatabaseManager, resolve_db_path
     from events_dispatcher import EventParams, KnownEvents, dispatcher
     from events_suppression_zone import surface_scan_suppression_manager
     from main_gui_widget import MainGUIWidget
@@ -46,7 +46,7 @@ logger = logging.getLogger("SurfaceNavigator")
 
 class SurfaceNavigatorPlugin:
     def __init__(self, plugin_dir: str):
-        db_path = os.path.join(plugin_dir, "surface_navigator.db")
+        db_path = resolve_db_path(plugin_dir)
         self.db_manager = DatabaseManager(db_path)
 
         # Sweep expired temporary marks (gc_temporaries). Cheap: sub-ms even on
