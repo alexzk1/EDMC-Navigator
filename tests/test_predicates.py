@@ -15,6 +15,7 @@ from surface_navigator.predicates import (
     KNOWN_PREDICATES,
     And,
     HasTritiumRing,
+    InvalidContext,
     IsTemporary,
     MineralIs,
     Not,
@@ -93,7 +94,58 @@ def test_within_no_player_matches_all():
 
 def test_within_describes_value():
     assert Within(10.0).describe() == "within 10.0 km"
-    assert Within(None).describe() == "distance (km)"
+    assert Within(None).describe() == "Surface Distance"
+
+
+# ---- validate_context (missing input / context) ----------------------------
+
+
+def test_validate_context_default_is_noop():
+    # A self-sufficient predicate never needs context.
+    MineralIs("iridium").validate_context(_ctx())
+
+
+def test_within_validate_context_needs_radius():
+    ctx = _ctx(player_coord=SurfacePoint(10.0, 20.0))
+    with pytest.raises(InvalidContext, match="radius"):
+        Within(None).validate_context(ctx)
+
+
+def test_within_validate_context_needs_surface_position():
+    # A radius set but the player flying in space (no lat/lon) -> can't evaluate.
+    with pytest.raises(InvalidContext, match="space"):
+        Within(5.0).validate_context(_ctx(player_coord=None))
+
+
+def test_within_validate_context_ok_on_surface():
+    ctx = _ctx(player_coord=SurfacePoint(10.0, 20.0))
+    Within(5.0).validate_context(ctx)  # no raise
+
+
+def test_within_light_years_validate_context_needs_radius():
+    ctx = _ctx(current_system_coords=(0.0, 0.0, 0.0))
+    with pytest.raises(InvalidContext, match="radius"):
+        WithinLightYears(None).validate_context(ctx)
+
+
+def test_within_light_years_validate_context_needs_current_star():
+    # Radius set but no current-system coordinates (game not running).
+    with pytest.raises(InvalidContext, match="current star"):
+        WithinLightYears(5.0).validate_context(_ctx())
+
+
+def test_validate_context_combinators_recurse():
+    # A Not(And(...)) wrapping a radius-less Within still fails.
+    tree = Not(And(Within(None), MineralIs("iridium")))
+    with pytest.raises(InvalidContext):
+        tree.validate_context(_ctx(player_coord=SurfacePoint(1.0, 2.0)))
+
+
+def test_validate_context_or_reports_first_bad_child():
+    with pytest.raises(InvalidContext):
+        Or(MineralIs("iridium"), WithinLightYears(None)).validate_context(
+            _ctx(current_system_coords=(0.0, 0.0, 0.0))
+        )
 
 
 # ---- MineralIs (fuzzy + original SQL) --------------------------------------
@@ -188,7 +240,7 @@ def test_within_light_years_no_current_matches_all():
 
 def test_within_light_years_describes():
     assert WithinLightYears(50.0).describe() == "within 50.0 light-years"
-    assert WithinLightYears(None).describe() == "light-year radius"
+    assert WithinLightYears(None).describe() == "Near Current Star"
 
 
 def test_within_light_years_references_no_star():
@@ -223,7 +275,7 @@ def test_within_light_years_of_star_unset_matches_all():
 
 def test_within_light_years_of_star_describes():
     assert WithinLightYearsOfStar(50.0, "Sol").describe() == "within 50.0 ly of Sol"
-    assert WithinLightYearsOfStar(None, "Sol").describe() == "light-year radius (star)"
+    assert WithinLightYearsOfStar(None, "Sol").describe() == "Near Any Star"
 
 
 def test_within_light_years_of_star_references_name():
@@ -251,7 +303,7 @@ def test_search_in_exact_system_unset_matches_all():
 
 def test_search_in_exact_system_describes():
     assert SearchInExactSystem("Sol").describe() == "in Sol"
-    assert SearchInExactSystem(None).describe() == "system (exact name)"
+    assert SearchInExactSystem(None).describe() == "In System"
 
 
 def test_search_in_exact_system_roundtrip():
@@ -270,7 +322,7 @@ def test_search_in_current_system_unset_matches_all():
 
 
 def test_search_in_current_system_describes():
-    assert SearchInCurrentSystem().describe() == "current system"
+    assert SearchInCurrentSystem().describe() == "In Current System"
 
 
 def test_search_in_current_system_roundtrip():

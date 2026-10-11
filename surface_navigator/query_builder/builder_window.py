@@ -24,7 +24,7 @@ from typing import Any
 from ..database import DatabaseManager, StarNotFoundError
 from ..models import SurfaceSpot
 from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint
-from ..predicates import KNOWN_PREDICATES, QueryContext
+from ..predicates import InvalidContext, KNOWN_PREDICATES, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
 from .base import DataContext
 from .line_widget import LineWidget
@@ -361,6 +361,9 @@ class QueryBuilderWindow(tk.Toplevel):
                 allow_unbounded=True,
                 star_resolver=self._star_resolver,
             )
+        except InvalidContext as e:
+            messagebox.showerror("Can't search", str(e))
+            return
         except StarNotFoundError as e:
             messagebox.showerror("Star not found", f"Could not resolve star: {e}")
             return

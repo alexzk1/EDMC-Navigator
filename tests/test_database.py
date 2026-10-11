@@ -25,12 +25,14 @@ from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.predicates import (
     And,
     HasTritiumRing,
+    InvalidContext,
     MineralIs,
     OnBody,
     QueryContext,
     SearchInCurrentSystem,
     SearchInExactSystem,
     StarNotFoundError,
+    Within,
     WithinLightYears,
     WithinLightYearsOfStar,
 )
@@ -777,6 +779,23 @@ def test_query_spots_within_light_years_matches_by_distance(db: DatabaseManager)
     ctx = QueryContext(current_system_coords=(0.0, 0.0, 0.0))
     result = db.query_spots(WithinLightYears(10.0), ctx)
     assert {sp.star_system for sp in result} == {"Beta"}
+
+
+def test_query_spots_missing_current_star_raises(db: DatabaseManager):
+    """A radius is set but there is no current-system context (game not
+    running): the engine must fail loud, not silently match everything."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
+    with pytest.raises(InvalidContext):
+        db.query_spots(WithinLightYears(5.0), QueryContext())
+
+
+def test_query_spots_missing_surface_position_raises(db: DatabaseManager):
+    """A radius is set but the player is in space (no lat/lon): same loud
+    failure rather than a match-all."""
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    with pytest.raises(InvalidContext):
+        db.query_spots(Within(5.0), QueryContext())
 
 
 def test_query_spots_combines_predicates(db: DatabaseManager):

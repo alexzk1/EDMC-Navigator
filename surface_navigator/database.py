@@ -664,7 +664,18 @@ class DatabaseManager:
 
         Raises ``StarNotFoundError`` if a referenced centre star has no
         coordinates and the resolver cannot supply any.
+
+        Raises :class:`InvalidContext` (a ``ValueError``) before running when a
+        predicate can't be evaluated -- a required field left blank, or a
+        location-dependent predicate whose context (current position/star) is
+        absent. This is checked in a dedicated pass so a bad predicate reports a
+        reason instead of silently rendering the match-all ``1 = 1``.
         """
+        # Dedicated validation pass: walk the whole tree once, up front, so a
+        # missing radius or unknown current star fails with a clear message
+        # rather than degrading to an unbounded match-all.
+        predicate.validate_context(ctx)
+
         self._resolve_referenced_stars(predicate, ctx, star_resolver)
 
         fragment, params = predicate.sql(ctx)

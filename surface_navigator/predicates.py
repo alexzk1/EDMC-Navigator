@@ -41,6 +41,18 @@ class StarNotFoundError(LookupError):
     """
 
 
+class InvalidContext(ValueError):
+    """A predicate can't be evaluated: required input or query context is
+    missing.
+
+    Raised by :meth:`Predicate.validate_context` before a query runs -- when a
+    required field (a radius, a name) is left blank, or a location-dependent
+    predicate's context (the player's current position or star) is absent. The
+    builder reports this as a clear reason instead of letting the predicate
+    silently degrade to a match-all ``1 = 1``.
+    """
+
+
 @dataclass
 class QueryContext:
     """Query-level data the engine fills in before running a query.
@@ -102,6 +114,21 @@ class Predicate:
         """
         return set()
 
+    def validate_context(self, ctx: QueryContext) -> None:
+        """Raise :class:`InvalidContext` if this predicate can't be evaluated.
+
+        The default is a no-op: a predicate with no input or context
+        requirements is always evaluable. Predicates that *do* require input
+        (a radius, a name) or query context (the player's current position or
+        star) override this to check their preconditions.
+
+        The engine calls this for the whole tree before running (each
+        combinator recurses into its children), so a missing radius or an
+        unknown current star fails fast with a clear message instead of
+        silently rendering the match-all ``1 = 1`` fragment.
+        """
+        return None
+
     def make_widget(self, parent: Any, *, data: Any) -> Any:
         raise NotImplementedError
 
@@ -147,6 +174,10 @@ class And(Predicate):
             stars |= p.referenced_stars()
         return stars
 
+    def validate_context(self, ctx: QueryContext) -> None:
+        for p in self.predicates:
+            p.validate_context(ctx)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.serial_name,
@@ -182,6 +213,10 @@ class Or(Predicate):
             stars |= p.referenced_stars()
         return stars
 
+    def validate_context(self, ctx: QueryContext) -> None:
+        for p in self.predicates:
+            p.validate_context(ctx)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.serial_name,
@@ -208,6 +243,9 @@ class Not(Predicate):
 
     def referenced_stars(self) -> set[str]:
         return self.predicate.referenced_stars()
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        self.predicate.validate_context(ctx)
 
     def to_dict(self) -> dict[str, Any]:
         return {"type": self.serial_name, "child": self.predicate.to_dict()}
@@ -284,6 +322,18 @@ class Within(Predicate):
                 deg_radius_sq,
             ],
         )
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.distance_km is None:
+            raise InvalidContext("Enter a surface radius before searching.")
+        if ctx.player_coord is None:
+            # ``player_coord`` (lat/lon) lives on the planet surface; it is
+            # absent while the player flies in space, so a surface-distance
+            # search can't be evaluated there.
+            raise InvalidContext(
+                "Surface distance needs your position on a planet surface -- "
+                "you appear to be flying in space (no lat/lon)."
+            )
 
 
 class MineralIs(Predicate):
@@ -500,6 +550,15 @@ class WithinLightYears(Predicate):
         if self.distance_ly is None or ctx.current_system_coords is None:
             return "1 = 1", []
         return _light_years_fragment(*ctx.current_system_coords, self.distance_ly)
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.distance_ly is None:
+            raise InvalidContext("Enter a light-year radius before searching.")
+        if ctx.current_system_coords is None:
+            raise InvalidContext(
+                "Searching near your current star needs the current system's "
+                "coordinates -- start Elite (or load a location) first."
+            )
 
 
 class WithinLightYearsOfStar(Predicate):
