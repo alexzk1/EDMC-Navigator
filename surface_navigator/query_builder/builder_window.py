@@ -240,7 +240,7 @@ class QueryBuilderWindow(tk.Toplevel):
         self._status.pack(side=tk.LEFT)
         ttk.Button(
             status, text="Clear all temporaries", command=lambda: self._gc(0)
-        ).pack(side=tk.RIGHT, padx=2)
+        ).pack(side=tk.RIGHT, padx=(5, 20), pady=5)
         ttk.Button(
             status,
             text=f"Clear temporaries > {_GC_LAST_HOUR_SECS // 60} min",
