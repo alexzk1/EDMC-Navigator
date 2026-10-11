@@ -27,8 +27,8 @@ from ..models import SurfaceSpot
 from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint
 from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
+from ..scrollable_area import ScrollableArea
 from ..vertical_resize_handler import VerticalResizeHandler
-from ..vertical_wheel_scroll import CanvasVerticalMouseWheelScroller
 from .base import DataContext
 from .line_widget import LineWidget
 from .render import BuilderState, build
@@ -53,7 +53,9 @@ class QueryBuilderWindow(tk.Toplevel):
         star_resolver: Any | None = None,
     ) -> None:
         super().__init__(parent)
-        self.title("Surface Search Builder")
+        self.title("Surface Navigator Managing")
+        self.minsize(800, 600)
+
         self.db_manager = db_manager
         self.preset_manager = preset_manager
         self.current_location = current_location
@@ -73,6 +75,7 @@ class QueryBuilderWindow(tk.Toplevel):
         self._restore_current_query()
 
         # Persist whatever the user has built when the window is closed.
+        self._is_closing: bool = False
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- UI construction --------------------------------------------------
@@ -140,40 +143,8 @@ class QueryBuilderWindow(tk.Toplevel):
         self._build_status(bottom)
 
     def _create_scrollable_container(self, parent: tk.Widget, hscroll: bool = False):
-        # Vertical scroll bar for the whole canvas
-        canvas = tk.Canvas(parent, highlightthickness=0)
-        canvas.pack_propagate(True)
-        vscrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)  # type: ignore
-
-        # Pack scrollbar(s), than canvas - order is important here, otherwise canvas will eat all space.
-        vscrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        if hscroll:
-            hscrollbar = ttk.Scrollbar(
-                parent,
-                orient="horizontal",
-                command=canvas.xview,  # type: ignore
-            )
-            canvas.configure(xscrollcommand=hscrollbar.set)
-            hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        canvas.configure(yscrollcommand=vscrollbar.set)
-        self._palette_canvas_scroll = CanvasVerticalMouseWheelScroller(
-            canvas, attach=True
-        )
-
-        palette = ttk.Frame(canvas)
-        palette.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        palette.pack_propagate(True)
-
-        canvas.create_window((0, 0), window=palette, anchor="nw")
-
-        # Keep the scroll region in sync as palette entries are added.
-        def _debounced_configure(event: Any):
-            self.after_idle(lambda: canvas.config(scrollregion=canvas.bbox("all")))
-
-        palette.bind("<Configure>", _debounced_configure)
-        return palette
+        area = ScrollableArea(parent=parent, hscroll=hscroll)
+        return area.controls_area
 
     def _build_palette(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="Conditions Palette").pack(anchor=tk.W)
@@ -295,7 +266,8 @@ class QueryBuilderWindow(tk.Toplevel):
         if self._active_line is line:
             self._active_line = self._lines[0] if self._lines else None
         if not self._lines:
-            self._add_line()
+            if not self._is_closing:
+                self._add_line()
             return False
         return True
 
@@ -446,7 +418,11 @@ class QueryBuilderWindow(tk.Toplevel):
             self._load_query(predicate)
 
     def _on_close(self) -> None:
+        """Window is closed."""
+        self._is_closing = True
         save_current_query(build(self._current_state()))
+        # Act consistent as user pressed "Clear" UI button.
+        self._reset_builder()
         self.destroy()
 
     def _load_query(self, predicate: Any) -> None:
