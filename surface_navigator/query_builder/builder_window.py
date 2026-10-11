@@ -22,10 +22,13 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 from ..database import DatabaseManager, StarNotFoundError
+from ..icons_cache import IconsCache
 from ..models import SurfaceSpot
 from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint
-from ..predicates import InvalidContext, KNOWN_PREDICATES, QueryContext
+from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
+from ..vertical_resize_handler import VerticalResizeHandler
+from ..vertical_wheel_scroll import CanvasVerticalMouseWheelScroller
 from .base import DataContext
 from .line_widget import LineWidget
 from .render import BuilderState, build
@@ -86,13 +89,33 @@ class QueryBuilderWindow(tk.Toplevel):
         return max(self._PALETTE_MIN_WIDTH, int(measure(widest) + 96))
 
     def _build_ui(self) -> None:
-        # Left: palette + presets. Right: builder + results.
+        # Left: palette + presets.
         left = ttk.Frame(self, width=self._compute_palette_width())
         left.pack(side=tk.LEFT, fill=tk.Y)
         left.pack_propagate(False)
-        self._build_palette(left)
-        self._build_presets(left)
 
+        # Section for palette with fixed initial height (controlled by resizer later)
+        self._palette_section = ttk.Frame(left)
+        self._palette_section.pack(side=tk.TOP, fill=tk.X)
+        self._palette_section.pack_propagate(False)
+        self._palette_section.config(height=380)
+        self._build_palette(self._palette_section)
+
+        # Setup resizer handler and widget
+        sizegrip = tk.Label(left, image=IconsCache.icons["resize"], cursor="sizing")
+        sizegrip.pack(side=tk.TOP, fill=tk.X)
+        self._left_panel_vertical_resizer = VerticalResizeHandler(
+            target=self._palette_section, min_height=50, max_height=800
+        )
+        self._left_panel_vertical_resizer.set_source_of_events(sizegrip)
+
+        # Bottom section - presets
+        self._presets_section = ttk.Frame(left)
+        self._presets_section.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
+        self._presets_section.pack_propagate(False)
+        self._build_presets(self._presets_section)
+
+        # Right: builder + results.
         right = ttk.Frame(self)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -116,57 +139,68 @@ class QueryBuilderWindow(tk.Toplevel):
         self._build_results(bottom)
         self._build_status(bottom)
 
-    def _build_palette(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="Add condition").pack(anchor=tk.W)
+    def _create_vertical_scrollable_container(self, parent: tk.Widget):
+        # Vertical scroll bar for the whole canvas
         canvas = tk.Canvas(parent, highlightthickness=0)
+        canvas.pack_propagate(True)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)  # type: ignore
-        palette = ttk.Frame(canvas)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+
+        # Pack scrollbar, than canvas - order is important here, otherwise canvas will eat all space.
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+        self._palette_canvas_scroll = CanvasVerticalMouseWheelScroller(
+            canvas, attach=True
+        )
+
+        palette = ttk.Frame(canvas)
+        palette.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        palette.pack_propagate(True)
+
         canvas.create_window((0, 0), window=palette, anchor="nw")
         # Keep the scroll region in sync as palette entries are added.
         palette.bind(
             "<Configure>",
             lambda e: canvas.config(scrollregion=canvas.bbox("all")),
         )
-        canvas.bind(
-            "<MouseWheel>", lambda e: canvas.yview_scroll(-1 * e.delta, "units")
-        )
-        for cls in KNOWN_PREDICATES:
-            self._add_palette_entry(palette, cls)
+        return palette
 
-    def _add_palette_entry(self, parent: tk.Widget, cls: Any) -> None:
-        label = cls().describe()
-        row = ttk.Frame(parent)
-        row.pack(fill=tk.X, pady=1)
-        ttk.Button(
-            row,
-            text="+",
-            width=3,
-            command=lambda c=cls: self._add_to_active(c, False),
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            row,
-            text="¬",
-            width=3,
-            command=lambda c=cls: self._add_to_active(c, True),
-        ).pack(side=tk.LEFT)
-        ttk.Label(row, text=label, anchor="w").pack(side=tk.LEFT, padx=(2, 0))
+    def _build_palette(self, parent: tk.Widget) -> None:
+        ttk.Label(parent, text="Conditions Palette").pack(anchor=tk.W)
+        palette = self._create_vertical_scrollable_container(parent)
+        for cls in KNOWN_PREDICATES:
+            label = cls().describe()
+            row = ttk.Frame(palette)
+            row.pack(fill=tk.X, pady=1)
+            ttk.Button(
+                row,
+                text="+",
+                width=3,
+                command=lambda c=cls: self._add_to_active(c, False),
+            ).pack(side=tk.LEFT)
+            ttk.Button(
+                row,
+                text="¬",
+                width=3,
+                command=lambda c=cls: self._add_to_active(c, True),
+            ).pack(side=tk.LEFT)
+            ttk.Label(row, text=label, anchor="w").pack(side=tk.LEFT, padx=(2, 0))
 
     def _build_presets(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="Presets").pack(anchor=tk.W, pady=(10, 0))
-        self._preset_list = tk.Listbox(parent, height=6)
+        ttk.Label(parent, text="User Presets").pack(anchor=tk.W, pady=(10, 0))
+        palette = self._create_vertical_scrollable_container(parent)
+        self._preset_list = tk.Listbox(palette, height=6)
         self._preset_list.pack(fill=tk.Y, expand=True)
         self._preset_list.bind("<<ListboxSelected>>", self._on_preset_selected)
-        ttk.Button(parent, text="Load", command=self._load_selected_preset).pack(
+        ttk.Button(palette, text="Load", command=self._load_selected_preset).pack(
             fill=tk.X, pady=(2, 0)
         )
 
-        ttk.Label(parent, text="Save current as:").pack(anchor=tk.W, pady=(10, 0))
-        self._save_entry = ttk.Entry(parent)
+        ttk.Label(palette, text="Save current as:").pack(anchor=tk.W, pady=(10, 0))
+        self._save_entry = ttk.Entry(palette)
         self._save_entry.pack(fill=tk.X)
-        ttk.Button(parent, text="Save preset", command=self._save_current).pack(
+        ttk.Button(palette, text="Save preset", command=self._save_current).pack(
             fill=tk.X, pady=(2, 0)
         )
         self._reload_presets()
@@ -174,10 +208,13 @@ class QueryBuilderWindow(tk.Toplevel):
     def _add_line_controls(self, parent: tk.Widget) -> None:
         controls = ttk.Frame(parent)
         controls.pack(fill=tk.X)
-        ttk.Button(controls, text="＋ Add line", command=self._add_line).pack(
+        ttk.Button(controls, text="＋ Add Line", command=self._add_line).pack(
             side=tk.LEFT
         )
-        ttk.Button(controls, text="− Remove line", command=self._remove_last_line).pack(
+        ttk.Button(controls, text="− Remove Line", command=self._remove_last_line).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(controls, text="🗑️ Reset Builder", command=self._reset_builder).pack(
             side=tk.LEFT, padx=(6, 0)
         )
 
@@ -288,35 +325,53 @@ class QueryBuilderWindow(tk.Toplevel):
     def _activate_line(self, line: LineWidget) -> None:
         self._active_line = line
 
-    def _remove_line(self, line: LineWidget) -> None:
+    def _remove_line_callback(self, line: LineWidget) -> bool:
+        """
+        This is 2nd part of line deletion, called as callback from the object which is being destroyed.
+        Do not call it directly as self._remove_line_callback(line) because internal data of the line will leak.
+        Returns False when last line was deleted and new empty was created instead.
+        """
+        self._clean_results()
         self._lines.remove(line)
         line.destroy()
         if self._active_line is line:
             self._active_line = self._lines[0] if self._lines else None
         if not self._lines:
             self._add_line()
+            return False
+        return True
 
     def _add_line(self) -> None:
+        self._clean_results()
         line = LineWidget(
             self._lines_container,
             data=self.data,
             on_activate=self._activate_line,
-            on_remove=self._remove_line,
+            on_remove=self._remove_line_callback,
         )
         self._lines.append(line)
         line.pack(fill=tk.X)
         self._active_line = line
 
-    def _remove_last_line(self) -> None:
-        if len(self._lines) <= 1:
-            return
-        self._lines[-1].remove()
+    def _remove_last_line(self) -> bool:
+        """
+        Removes last line in the list. Properly calls internal line clean-up.
+        Returns True if more lines remain, returns False when last line was deleted and empty line was created instead.
+        """
+        # Do not call self._remove_line_callback(line) direct, instead ask object to self destroy.
+        # Object must cleanup internal stuff.
+        assert len(self._lines) > 0
+        return self._lines[-1].remove()
 
     def _add_to_active(self, cls: Any, not_: bool) -> None:
         if self._active_line is None:
             self._add_line()
         assert self._active_line is not None
         self._active_line.add_widget(cls(), not_)
+
+    def _reset_builder(self):
+        while self._remove_last_line():
+            pass
 
     # -- building / running ----------------------------------------------
     def _current_state(self) -> BuilderState:
@@ -372,9 +427,13 @@ class QueryBuilderWindow(tk.Toplevel):
             return
         self._show_results(spots)
 
-    def _show_results(self, spots: list[SurfaceSpot]) -> None:
+    def _clean_results(self):
         for item in self._result_tree.get_children():
             self._result_tree.delete(item)
+        self._status.config(text="0 result(s)")
+
+    def _show_results(self, spots: list[SurfaceSpot]) -> None:
+        self._clean_results()
         for spot in spots:
             self._result_tree.insert(
                 "",
@@ -449,7 +508,7 @@ class QueryBuilderWindow(tk.Toplevel):
                 self._lines_container,
                 data=self.data,
                 on_activate=self._activate_line,
-                on_remove=self._remove_line,
+                on_remove=self._remove_line_callback,
             )
             self._lines.append(line)
             line.pack(fill=tk.X)

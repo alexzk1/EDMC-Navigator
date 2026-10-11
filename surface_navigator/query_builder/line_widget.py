@@ -29,7 +29,7 @@ class LineWidget(ttk.Frame):
         *,
         data: DataContext,
         on_activate: Callable[[LineWidget], None],
-        on_remove: Callable[[LineWidget], None],
+        on_remove: Callable[[LineWidget], bool],
     ) -> None:
         super().__init__(parent)
         self.data = data
@@ -110,11 +110,11 @@ class LineWidget(ttk.Frame):
                 self._refresh_label()
                 break
 
-    def remove(self) -> None:
+    def remove(self) -> bool:
         for container, _ in self._widgets:
             container.destroy()
         self._widgets.clear()
-        self._on_remove(self)
+        return self._on_remove(self)
 
     # -- round-trip -------------------------------------------------------
     def build(self) -> LineNode:
