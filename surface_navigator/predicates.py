@@ -102,6 +102,9 @@ class Predicate:
         """
         return set()
 
+    def make_widget(self, parent: Any, *, data: Any) -> Any:
+        raise NotImplementedError
+
     def __eq__(self, other: object) -> bool:
         # Structural equality: two predicates are equal when their serialized
         # trees match. This is what lets Preset/dataclass comparisons and set
@@ -244,6 +247,21 @@ class Within(Predicate):
     def from_dict(cls, data: dict[str, Any]) -> Predicate:
         return cls(data.get("distance_km"))
 
+    def make_widget(self, parent: Any, *, data: Any):
+        # Lazy import avoids a circular import: query_builder imports
+        # predicates, so predicates must not import the widgets at module load.
+        from .query_builder.widgets.numeric import NumericInputWidget
+
+        return NumericInputWidget(
+            self,
+            parent,
+            data,
+            leaf_cls=Within,
+            field="distance_km",
+            label="Search Radius",
+            unit="km",
+        )
+
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if self.distance_km is None or ctx.player_coord is None:
             return "1 = 1", []
@@ -303,6 +321,11 @@ class MineralIs(Predicate):
     def from_dict(cls, data: dict[str, Any]) -> Predicate:
         return cls(data.get("user_input"))
 
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.mineral import MineralInputWidget
+
+        return MineralInputWidget(self, parent, data)
+
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if not self.to_find:
             return "1 = 1", []
@@ -350,11 +373,21 @@ class HasTritiumRing(HasFlag):
     label = "has tritium ring"
     serial_name = "has_tritium_ring"
 
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.flag import FlagStatusWidget
+
+        return FlagStatusWidget(self, parent, data)
+
 
 class IsTemporary(HasFlag):
     flag = SurfaceSpotFlags.IS_TEMPORARY_MARK
     label = "is temporary"
     serial_name = "is_temporary"
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.flag import FlagStatusWidget
+
+        return FlagStatusWidget(self, parent, data)
 
 
 class OnBody(Predicate):
@@ -375,6 +408,11 @@ class OnBody(Predicate):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Predicate:
         return cls(data.get("body_name"))
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.on_body import OnBodyInputWidget
+
+        return OnBodyInputWidget(self, parent, data)
 
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         # A landing spot sits on a real body: skip empty-body_name rows (bad
@@ -445,6 +483,19 @@ class WithinLightYears(Predicate):
     def from_dict(cls, data: dict[str, Any]) -> Predicate:
         return cls(data.get("distance_ly"))
 
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.numeric import NumericInputWidget
+
+        return NumericInputWidget(
+            self,
+            parent,
+            data,
+            leaf_cls=WithinLightYears,
+            field="distance_ly",
+            label="Search Radius",
+            unit="ly",
+        )
+
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if self.distance_ly is None or ctx.current_system_coords is None:
             return "1 = 1", []
@@ -485,6 +536,11 @@ class WithinLightYearsOfStar(Predicate):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Predicate:
         return cls(data.get("distance_ly"), data.get("star_name"))
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.star_distance import StarDistanceInputWidget
+
+        return StarDistanceInputWidget(self, parent, data)
 
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if self.distance_ly is None or self.star_name is None:
@@ -547,6 +603,11 @@ class SearchInExactSystem(Predicate):
         # transparently instead of silently returning nothing.
         return {self.system_name} if self.system_name else set()
 
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.system import SystemInputWidget
+
+        return SystemInputWidget(self, parent, data)
+
 
 class SearchInCurrentSystem(Predicate):
     """Match spots in the player's current system.
@@ -575,6 +636,11 @@ class SearchInCurrentSystem(Predicate):
             return "1 = 1", []
         return "star_systems.star_name = ?", [ctx.current_system_name]
 
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.current_system import CurrentSystemInfoWidget
+
+        return CurrentSystemInfoWidget(self, parent, data)
+
 
 # ---- Registry --------------------------------------------------------------
 
@@ -583,11 +649,14 @@ class SearchInCurrentSystem(Predicate):
 # with the class so a new one can be created on pick -- no UI-side text.
 KNOWN_PREDICATES: list[type[Predicate]] = [
     Within,
+    WithinLightYears,
+    WithinLightYearsOfStar,
+    SearchInExactSystem,
+    SearchInCurrentSystem,
     MineralIs,
+    OnBody,
     HasTritiumRing,
     IsTemporary,
-    OnBody,
-    WithinLightYears,
 ]
 
 

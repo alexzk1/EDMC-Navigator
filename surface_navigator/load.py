@@ -422,7 +422,9 @@ class SurfaceNavigatorPlugin:
         # that root existing. So the GUI must come before anything that schedules.
         scheduler.bind_root(parent)
         if self._gui is None:
-            self._gui = MainGUIWidget(parent, self.db_manager, self._overlay)
+            self._gui = MainGUIWidget(
+                parent, self.db_manager, self._overlay, self.preset_manager
+            )
             self._gui.current_location = self.current_location
         return self._gui
 

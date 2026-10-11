@@ -1,8 +1,14 @@
 #!/bin/bash
 
+function check {
+python3 -m py_compile $1/*.py
+pyflakes $1/*.py
+}
+
+set +e
+check surface_navigator
+check surface_navigator/query_builder
+check surface_navigator/query_builder/widgets
 set -e
 
-python3 -m py_compile surface_navigator/*.py
-#mypy --check-untyped-defs surface_navigator/
-pyflakes surface_navigator/*.py
 python3 -m pytest tests/

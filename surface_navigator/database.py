@@ -524,6 +524,32 @@ class DatabaseManager:
                 )
             )
 
+    def known_systems(self) -> list[str]:
+        """Distinct star names known to the DB, ordered for a stable dropdown.
+
+        Used by the query builder's star/system widgets to offer autocomplete
+        instead of requiring the user to type a name from memory.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT star_name FROM star_systems WHERE star_name != '' "
+                "ORDER BY star_name"
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def known_bodies(self) -> list[str]:
+        """Distinct body names known to the DB, ordered for a stable dropdown.
+
+        Used by the query builder's ``on body`` widget to offer autocomplete
+        instead of requiring the user to type a body name from memory.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT body_name FROM surface_spots "
+                "WHERE body_name != '' ORDER BY body_name"
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def update_spot(self, spot_id: int, **kwargs: Any) -> bool:
         if not kwargs:
             return False

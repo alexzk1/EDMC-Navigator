@@ -14,6 +14,7 @@ from .player_location import (
     PlayerLocation,
     SurfacePoint,
 )
+from .presets import PresetManager
 from .spot_flags import SurfaceSpotFlags
 
 
@@ -43,7 +44,11 @@ class MainGUIWidget(ttk.Frame):
     REFRESH_INTERVAL_SEC: float = 5.0
 
     def __init__(
-        self, parent: tk.Tk, db_manager: DatabaseManager, overlay_client: OverlayClient
+        self,
+        parent: tk.Tk,
+        db_manager: DatabaseManager,
+        overlay_client: OverlayClient,
+        preset_manager: PresetManager,
     ):
         super().__init__(parent)
         self.last_known_full_body = ""
@@ -51,6 +56,7 @@ class MainGUIWidget(ttk.Frame):
         self._last_gui_refresh: float = 0.0
         self.db_manager = db_manager
         self.overlay = overlay_client
+        self.preset_manager = preset_manager
         self.current_location: PlayerLocation | None = None
         self.current_system: StarSystem | None = None
 
@@ -78,6 +84,10 @@ class MainGUIWidget(ttk.Frame):
         self._btn_add.pack(side=tk.LEFT, padx=2)
 
         ttk.Button(toolbar, text="Navigate To", command=self._on_navigate).pack(
+            side=tk.RIGHT, padx=2
+        )
+
+        ttk.Button(toolbar, text="Manage", command=self._open_query_builder).pack(
             side=tk.RIGHT, padx=2
         )
 
@@ -336,5 +346,22 @@ class MainGUIWidget(ttk.Frame):
         AddSpotDialog(
             parent=parent,
             db_manager=self.db_manager,
+            current_location=self.current_location,
+        )
+
+    def _open_query_builder(self):
+        """Open the non-modal query-builder window (selection only).
+
+        The builder is a ``Toplevel`` so it can float on a second monitor while
+        the main window stays usable. Destructive actions stay on explicit
+        buttons inside the builder -- never inline in the builder itself.
+        """
+        from .query_builder.builder_window import QueryBuilderWindow
+
+        parent: Any = self.winfo_toplevel()
+        QueryBuilderWindow(
+            parent,
+            db_manager=self.db_manager,
+            preset_manager=self.preset_manager,
             current_location=self.current_location,
         )

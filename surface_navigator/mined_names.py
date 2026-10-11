@@ -105,3 +105,17 @@ class Commodities:
         if resolved:
             return resolved.symbol
         return None
+
+    @classmethod
+    def all_names(cls) -> list[str]:
+        """Every known commodity label (symbol + trade name), sorted.
+
+        Used by the query builder's mineral widget to autocomplete against the
+        real catalogue rather than requiring an exact typed match.
+        """
+        cls._ensure_loaded()
+        names: set[str] = set()
+        for m in cls._SYMBOL_TO_MARKET_NAMES.values():
+            names.add(m.symbol)
+            names.add(m.trade_name)
+        return sorted(names)
