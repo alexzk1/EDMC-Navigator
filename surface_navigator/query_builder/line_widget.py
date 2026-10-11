@@ -50,7 +50,7 @@ class LineWidget(ttk.Frame):
         # Line-level NOT toggle (a Checkbutton to distinguish it from the
         # per-widget NOT buttons).
         self._line_not_btn = ttk.Checkbutton(
-            header, text="NOT", variable=self._line_not, command=self._refresh_label
+            header, text="Neg", variable=self._line_not, command=self._refresh_label
         )
         self._line_not_btn.pack(side=tk.LEFT)
 
@@ -98,6 +98,7 @@ class LineWidget(ttk.Frame):
         widget: PredicateEditor = pred.make_widget(parent=container, data=self.data)
         if not_:
             widget.set_not(True)
+        self._widgets.append((container, widget))
         self._refresh_label()
         self._on_activate(self)
 
@@ -139,4 +140,4 @@ class LineWidget(ttk.Frame):
         text = And(*children).describe() if children else ""
         if node.not_:
             text = f"NOT {text}"
-        self._label.config(text=text)
+        self._label.config(text=f"| QUERY: {text}")

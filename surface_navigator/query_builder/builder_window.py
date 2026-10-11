@@ -87,13 +87,13 @@ class QueryBuilderWindow(tk.Toplevel):
         header.pack(fill=tk.X)
         self._top_not = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            header, text="NOT the whole search", variable=self._top_not
+            header, text="Neg the whole query.", variable=self._top_not
         ).pack(side=tk.RIGHT)
         ttk.Button(header, text="Run", command=self._run).pack(side=tk.RIGHT)
 
+        self._add_line_controls(right)
         self._lines_container = ttk.Frame(right)
         self._lines_container.pack(fill=tk.BOTH, expand=True)
-        self._add_line_controls(right)
 
         self._build_results(right)
         self._build_status(right)
