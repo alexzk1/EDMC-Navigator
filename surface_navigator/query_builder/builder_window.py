@@ -200,14 +200,18 @@ class QueryBuilderWindow(tk.Toplevel):
 
         self._builder_canvas = tk.Canvas(canvas_row, highlightthickness=0)
         self._vscrollbar = ttk.Scrollbar(
-            canvas_row, orient="vertical", command=self._builder_canvas.yview
+            canvas_row,
+            orient="vertical",
+            command=self._builder_canvas.yview,  # type: ignore
         )
         self._builder_canvas.configure(yscrollcommand=self._vscrollbar.set)
         self._builder_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._vscrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self._hscrollbar = ttk.Scrollbar(
-            outer, orient="horizontal", command=self._builder_canvas.xview
+            outer,
+            orient="horizontal",
+            command=self._builder_canvas.xview,  # type: ignore
         )
         self._builder_canvas.configure(xscrollcommand=self._hscrollbar.set)
         self._hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
@@ -226,7 +230,7 @@ class QueryBuilderWindow(tk.Toplevel):
             # bounding box grows past the canvas and the horizontal scrollbar
             # gets a real scrollable range instead of being pinned at 100%.
             region = self._builder_canvas.bbox("all")
-            if region is not None:
+            if region is not None:  # type: ignore
                 self._builder_canvas.configure(scrollregion=region)
 
         self._lines_container.bind("<Configure>", _on_inner_configure)

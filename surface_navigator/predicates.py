@@ -229,7 +229,7 @@ class Within(Predicate):
     position comes from ``ctx.player_coord``.
     """
 
-    label = "distance (km)"
+    label = "Surface Distance"
     serial_name = "within_km"
 
     def __init__(self, distance_km: float | None = None) -> None:
@@ -299,7 +299,7 @@ class MineralIs(Predicate):
     instead. The "rings or spots" combination lives in the UI query library.
     """
 
-    label = "mineral"
+    label = "Surface Mineral"
     serial_name = "mineral_is"
 
     def __init__(self, user_input: str | None = None) -> None:
@@ -370,7 +370,7 @@ class HasTritiumRing(HasFlag):
     """
 
     flag = SurfaceSpotFlags.TRITIUM_RING_PRESENT
-    label = "has tritium ring"
+    label = "Is Tritium Ring"
     serial_name = "has_tritium_ring"
 
     def make_widget(self, parent: Any, *, data: Any):
@@ -381,7 +381,7 @@ class HasTritiumRing(HasFlag):
 
 class IsTemporary(HasFlag):
     flag = SurfaceSpotFlags.IS_TEMPORARY_MARK
-    label = "is temporary"
+    label = "Is Temporary"
     serial_name = "is_temporary"
 
     def make_widget(self, parent: Any, *, data: Any):
@@ -391,7 +391,7 @@ class IsTemporary(HasFlag):
 
 
 class OnBody(Predicate):
-    label = "on body"
+    label = "Is on Body"
     serial_name = "on_body"
 
     def __init__(self, body_name: str | None = None) -> None:
@@ -465,7 +465,7 @@ class WithinLightYears(Predicate):
     references no named star.
     """
 
-    label = "light-year radius"
+    label = "Near Current Star"
     serial_name = "within_light_years"
 
     def __init__(self, distance_ly: float | None = None) -> None:
@@ -512,7 +512,7 @@ class WithinLightYearsOfStar(Predicate):
     search is written once in :func:`_light_years_fragment`.
     """
 
-    label = "light-year radius (star)"
+    label = "Near Any Star"
     serial_name = "within_light_years_of_star"
 
     def __init__(
@@ -573,7 +573,7 @@ class SearchInExactSystem(Predicate):
     matches every system.
     """
 
-    label = "system (exact name)"
+    label = "In System"
     serial_name = "search_in_exact_system"
 
     def __init__(self, system_name: str | None = None) -> None:
@@ -618,7 +618,7 @@ class SearchInCurrentSystem(Predicate):
     matches every system (there is no "current" to restrict to).
     """
 
-    label = "current system"
+    label = "In Current System"
     serial_name = "search_in_current_system"
 
     def describe(self) -> str:
