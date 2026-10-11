@@ -139,17 +139,25 @@ class QueryBuilderWindow(tk.Toplevel):
         self._build_results(bottom)
         self._build_status(bottom)
 
-    def _create_vertical_scrollable_container(self, parent: tk.Widget):
+    def _create_scrollable_container(self, parent: tk.Widget, hscroll: bool = False):
         # Vertical scroll bar for the whole canvas
         canvas = tk.Canvas(parent, highlightthickness=0)
         canvas.pack_propagate(True)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)  # type: ignore
+        vscrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)  # type: ignore
 
-        # Pack scrollbar, than canvas - order is important here, otherwise canvas will eat all space.
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Pack scrollbar(s), than canvas - order is important here, otherwise canvas will eat all space.
+        vscrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        if hscroll:
+            hscrollbar = ttk.Scrollbar(
+                parent,
+                orient="horizontal",
+                command=canvas.xview,  # type: ignore
+            )
+            canvas.configure(xscrollcommand=hscrollbar.set)
+            hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.configure(yscrollcommand=vscrollbar.set)
         self._palette_canvas_scroll = CanvasVerticalMouseWheelScroller(
             canvas, attach=True
         )
@@ -159,16 +167,17 @@ class QueryBuilderWindow(tk.Toplevel):
         palette.pack_propagate(True)
 
         canvas.create_window((0, 0), window=palette, anchor="nw")
+
         # Keep the scroll region in sync as palette entries are added.
-        palette.bind(
-            "<Configure>",
-            lambda e: canvas.config(scrollregion=canvas.bbox("all")),
-        )
+        def _debounced_configure(event: Any):
+            self.after_idle(lambda: canvas.config(scrollregion=canvas.bbox("all")))
+
+        palette.bind("<Configure>", _debounced_configure)
         return palette
 
     def _build_palette(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="Conditions Palette").pack(anchor=tk.W)
-        palette = self._create_vertical_scrollable_container(parent)
+        palette = self._create_scrollable_container(parent)
         for cls in KNOWN_PREDICATES:
             label = cls().describe()
             row = ttk.Frame(palette)
@@ -189,7 +198,7 @@ class QueryBuilderWindow(tk.Toplevel):
 
     def _build_presets(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="User Presets").pack(anchor=tk.W, pady=(10, 0))
-        palette = self._create_vertical_scrollable_container(parent)
+        palette = self._create_scrollable_container(parent)
         self._preset_list = tk.Listbox(palette, height=6)
         self._preset_list.pack(fill=tk.Y, expand=True)
         self._preset_list.bind("<<ListboxSelected>>", self._on_preset_selected)
@@ -231,58 +240,7 @@ class QueryBuilderWindow(tk.Toplevel):
         # status/results strip that is packed later into ``parent``.
         outer = ttk.Frame(parent)
         outer.pack(fill=tk.BOTH, expand=True)
-
-        canvas_row = ttk.Frame(outer)
-        canvas_row.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        self._builder_canvas = tk.Canvas(canvas_row, highlightthickness=0)
-        self._vscrollbar = ttk.Scrollbar(
-            canvas_row,
-            orient="vertical",
-            command=self._builder_canvas.yview,  # type: ignore
-        )
-        self._builder_canvas.configure(yscrollcommand=self._vscrollbar.set)
-        self._builder_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._vscrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self._hscrollbar = ttk.Scrollbar(
-            outer,
-            orient="horizontal",
-            command=self._builder_canvas.xview,  # type: ignore
-        )
-        self._builder_canvas.configure(xscrollcommand=self._hscrollbar.set)
-        self._hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # The inner frame holds the lines; it is stretched to the canvas width
-        # so widgets that overflow a line push the horizontal scrollbar out.
-        self._lines_container = ttk.Frame(self._builder_canvas)
-        self._builder_canvas.create_window(
-            (0, 0), window=self._lines_container, anchor="nw", tags="builder_inner"
-        )
-
-        def _on_inner_configure(event: tk.Event) -> None:
-            # Keep the scroll region covering everything currently drawn. The
-            # inner frame sizes itself to its content (we deliberately do NOT
-            # force it to the canvas width), so when widgets overflow a line the
-            # bounding box grows past the canvas and the horizontal scrollbar
-            # gets a real scrollable range instead of being pinned at 100%.
-            region = self._builder_canvas.bbox("all")
-            if region is not None:  # type: ignore
-                self._builder_canvas.configure(scrollregion=region)
-
-        self._lines_container.bind("<Configure>", _on_inner_configure)
-
-        # Wheel (Windows/macOS) and X11 scroll buttons (Linux).
-        def _wheel(event: tk.Event) -> None:
-            self._builder_canvas.yview_scroll(-1 * event.delta, "units")
-
-        self._builder_canvas.bind("<MouseWheel>", _wheel)
-        self._builder_canvas.bind(
-            "<Button-4>", lambda e: self._builder_canvas.yview_scroll(1, "units")
-        )
-        self._builder_canvas.bind(
-            "<Button-5>", lambda e: self._builder_canvas.yview_scroll(-1, "units")
-        )
+        self._lines_container = self._create_scrollable_container(outer, True)
 
     def _build_results(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="Results").pack(anchor=tk.W, pady=(10, 0))
