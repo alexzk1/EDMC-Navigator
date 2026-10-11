@@ -17,6 +17,7 @@ builder -- so the builder stays a pure selection surface.
 from __future__ import annotations
 
 import tkinter as tk
+from tkinter import font as _tk_font
 from tkinter import messagebox, ttk
 from typing import Any
 
@@ -36,7 +37,8 @@ _GC_LAST_HOUR_SECS = 3600
 class QueryBuilderWindow(tk.Toplevel):
     """Floating window that composes and runs a surface search."""
 
-    _PALETTE_WIDTH = 190
+    # Lower bound for the left column so it never gets uncomfortably narrow.
+    _PALETTE_MIN_WIDTH = 220
 
     def __init__(
         self,
@@ -71,9 +73,21 @@ class QueryBuilderWindow(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- UI construction --------------------------------------------------
+    def _compute_palette_width(self) -> int:
+        """Width of the left column: widest condition label plus the +/- buttons,
+        row padding and the vertical scrollbar.
+
+        Measured with the default font so it works before the widget is
+        realized; the margin covers the two ``width=3`` buttons, row padding
+        and the scrollbar, so no label gets truncated.
+        """
+        measure = _tk_font.Font().measure
+        widest = max((cls().describe() for cls in KNOWN_PREDICATES), key=measure)
+        return max(self._PALETTE_MIN_WIDTH, int(measure(widest) + 96))
+
     def _build_ui(self) -> None:
         # Left: palette + presets. Right: builder + results.
-        left = ttk.Frame(self, width=self._PALETTE_WIDTH)
+        left = ttk.Frame(self, width=self._compute_palette_width())
         left.pack(side=tk.LEFT, fill=tk.Y)
         left.pack_propagate(False)
         self._build_palette(left)
@@ -92,11 +106,15 @@ class QueryBuilderWindow(tk.Toplevel):
         ttk.Button(header, text="Run", command=self._run).pack(side=tk.RIGHT)
 
         self._add_line_controls(right)
-        self._lines_container = ttk.Frame(right)
-        self._lines_container.pack(fill=tk.BOTH, expand=True)
+        self._build_builder(right)
 
-        self._build_results(right)
-        self._build_status(right)
+        # Bottom strip: results + status. Kept out of the builder's pack tree so
+        # it never steals width from the canvas; the builder expands to fill the
+        # space above it.
+        bottom = ttk.Frame(right)
+        bottom.pack(side=tk.BOTTOM, fill=tk.X)
+        self._build_results(bottom)
+        self._build_status(bottom)
 
     def _build_palette(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="Add condition").pack(anchor=tk.W)
@@ -163,10 +181,72 @@ class QueryBuilderWindow(tk.Toplevel):
             side=tk.LEFT, padx=(6, 0)
         )
 
+    def _build_builder(self, parent: tk.Widget) -> None:
+        """Builder area: lines inside a two-direction scrollable canvas.
+
+        Lines are packed into ``self._lines_container`` -- the inner frame that
+        lives inside the canvas. The canvas owns the scrollbars and keeps the
+        scroll region in sync as lines and their widgets are added, so a line
+        full of widgets (or many lines) scrolls instead of running off-screen.
+        """
+        # Outer wrapper owns the vertical layout: [canvas row] over [hscroll].
+        # Keeping the hscroll inside this block means it never fights the
+        # status/results strip that is packed later into ``parent``.
+        outer = ttk.Frame(parent)
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        canvas_row = ttk.Frame(outer)
+        canvas_row.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._builder_canvas = tk.Canvas(canvas_row, highlightthickness=0)
+        self._vscrollbar = ttk.Scrollbar(
+            canvas_row, orient="vertical", command=self._builder_canvas.yview
+        )
+        self._builder_canvas.configure(yscrollcommand=self._vscrollbar.set)
+        self._builder_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._vscrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._hscrollbar = ttk.Scrollbar(
+            outer, orient="horizontal", command=self._builder_canvas.xview
+        )
+        self._builder_canvas.configure(xscrollcommand=self._hscrollbar.set)
+        self._hscrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # The inner frame holds the lines; it is stretched to the canvas width
+        # so widgets that overflow a line push the horizontal scrollbar out.
+        self._lines_container = ttk.Frame(self._builder_canvas)
+        self._builder_canvas.create_window(
+            (0, 0), window=self._lines_container, anchor="nw", tags="builder_inner"
+        )
+
+        def _on_inner_configure(event: tk.Event) -> None:
+            # Keep the scroll region covering everything currently drawn. The
+            # inner frame sizes itself to its content (we deliberately do NOT
+            # force it to the canvas width), so when widgets overflow a line the
+            # bounding box grows past the canvas and the horizontal scrollbar
+            # gets a real scrollable range instead of being pinned at 100%.
+            region = self._builder_canvas.bbox("all")
+            if region is not None:
+                self._builder_canvas.configure(scrollregion=region)
+
+        self._lines_container.bind("<Configure>", _on_inner_configure)
+
+        # Wheel (Windows/macOS) and X11 scroll buttons (Linux).
+        def _wheel(event: tk.Event) -> None:
+            self._builder_canvas.yview_scroll(-1 * event.delta, "units")
+
+        self._builder_canvas.bind("<MouseWheel>", _wheel)
+        self._builder_canvas.bind(
+            "<Button-4>", lambda e: self._builder_canvas.yview_scroll(1, "units")
+        )
+        self._builder_canvas.bind(
+            "<Button-5>", lambda e: self._builder_canvas.yview_scroll(-1, "units")
+        )
+
     def _build_results(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="Results").pack(anchor=tk.W, pady=(10, 0))
         container = ttk.Frame(parent)
-        container.pack(fill=tk.BOTH, expand=True)
+        container.pack(fill=tk.X)
         columns = ("system", "body", "mineral", "note", "lat", "lon")
         self._result_tree = ttk.Treeview(
             container, columns=columns, show="headings", height=8
