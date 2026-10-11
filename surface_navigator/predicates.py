@@ -487,9 +487,9 @@ class WithinLightYears(Predicate):
         from .query_builder.widgets.numeric import NumericInputWidget
 
         return NumericInputWidget(
-            self,
-            parent,
-            data,
+            owner=self,
+            parent=parent,
+            data=data,
             leaf_cls=WithinLightYears,
             field="distance_ly",
             label="Search Radius",

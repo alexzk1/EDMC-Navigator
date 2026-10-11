@@ -35,13 +35,15 @@ class NumericInputWidget(BaseInputWidget):
         self._field = field
         self._unit = unit
         self._value = tk.StringVar()
-        self._label = label
+        # Stored under a name that does NOT collide with the header label
+        # widget (``self._label``) set by BaseInputWidget._build_header().
+        self._caption = label
         super().__init__(owner, parent, data)
 
     def _build_input(self) -> None:
         row = ttk.Frame(self)
         row.pack(fill=tk.X)
-        ttk.Label(row, text=f"{self._label} ({self._unit}):").pack(side=tk.LEFT)
+        ttk.Label(row, text=f"{self._caption} ({self._unit}):").pack(side=tk.LEFT)
 
         # Only allow digits, a single dot, and a leading minus (kept permissive;
         # an unparseable value simply yields a no-op predicate).
