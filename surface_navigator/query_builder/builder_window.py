@@ -35,6 +35,7 @@ from .render import BuilderState, build
 
 # Seconds of age for the "clear temporaries older than an hour" action.
 _GC_LAST_HOUR_SECS = 3600
+_LEFT_LEFT_PAD_PX = 5
 
 
 class QueryBuilderWindow(tk.Toplevel):
@@ -54,7 +55,7 @@ class QueryBuilderWindow(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title("Surface Navigator Managing")
-        self.minsize(800, 600)
+        self.minsize(1024, 768)
 
         self.db_manager = db_manager
         self.preset_manager = preset_manager
@@ -78,6 +79,19 @@ class QueryBuilderWindow(tk.Toplevel):
         self._is_closing: bool = False
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Sync resizers!
+        self.after(50, self._fix_layout)
+
+    def _fix_layout(self):
+        """
+        Hack to make splitter between builder lines and results table to work.
+        Without this splitted will resize window instead results tree.
+        """
+        w = self.winfo_width()
+        h = self.winfo_height()
+        self.geometry(f"{w + 1}x{h + 1}")
+        self.geometry(f"{w}x{h}")
+
     # -- UI construction --------------------------------------------------
     def _compute_palette_width(self) -> int:
         """Width of the left column: widest condition label plus the +/- buttons,
@@ -98,49 +112,62 @@ class QueryBuilderWindow(tk.Toplevel):
         left.pack_propagate(False)
 
         # Section for palette with fixed initial height (controlled by resizer later)
-        self._palette_section = ttk.Frame(left)
-        self._palette_section.pack(side=tk.TOP, fill=tk.X)
-        self._palette_section.pack_propagate(False)
-        self._palette_section.config(height=380)
-        self._build_palette(self._palette_section)
+        palette_section = ttk.Frame(left)
+        palette_section.pack(side=tk.TOP, fill=tk.X)
+        palette_section.pack_propagate(False)
+        palette_section.config(height=380)
+        self._build_palette(palette_section)
 
         # Setup resizer handler and widget
         sizegrip = tk.Label(left, image=IconsCache.icons["resize"], cursor="sizing")
         sizegrip.pack(side=tk.TOP, fill=tk.X)
         self._left_panel_vertical_resizer = VerticalResizeHandler(
-            target=self._palette_section, min_height=50, max_height=800
+            target=palette_section, min_height=50, max_height=800
         )
         self._left_panel_vertical_resizer.set_source_of_events(sizegrip)
 
         # Bottom section - presets
-        self._presets_section = ttk.Frame(left)
-        self._presets_section.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
-        self._presets_section.pack_propagate(False)
-        self._build_presets(self._presets_section)
+        presets_section = ttk.Frame(left)
+        presets_section.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
+        presets_section.pack_propagate(False)
+        self._build_presets(presets_section)
 
         # Right: builder + results.
         right = ttk.Frame(self)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Top-level NOT toggle + Run button, in the title-bar area.
-        header = ttk.Frame(right)
-        header.pack(fill=tk.X)
+        # Top Level Header + Generic buttons for all lines.
+        right_header = ttk.Frame(right)
+        right_header.pack(fill=tk.X)
         self._top_not = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            header, text="Neg the whole query.", variable=self._top_not
+            right_header, text="Neg the whole query.", variable=self._top_not
         ).pack(side=tk.RIGHT)
-        ttk.Button(header, text="Run", command=self._run).pack(side=tk.RIGHT)
-
+        ttk.Button(right_header, text="Run", command=self._run).pack(side=tk.RIGHT)
         self._add_line_controls(right)
-        self._build_builder(right)
 
-        # Bottom strip: results + status. Kept out of the builder's pack tree so
-        # it never steals width from the canvas; the builder expands to fill the
-        # space above it.
-        bottom = ttk.Frame(right)
-        bottom.pack(side=tk.BOTTOM, fill=tk.X)
-        self._build_results(bottom)
-        self._build_status(bottom)
+        # Lines area
+        lines_area = ttk.Frame(right)
+        lines_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        lines_area.config(height=250)
+        lines_area.pack_propagate(False)
+        self._lines_container = self._create_scrollable_container(lines_area, True)
+
+        # Resizer lines/table
+        sizegrip = tk.Label(right, image=IconsCache.icons["resize"], cursor="sizing")
+        sizegrip.pack(side=tk.TOP, fill=tk.X)
+        self._right_panel_vertical_resizer = VerticalResizeHandler(
+            target=lines_area, min_height=50, max_height=800
+        )
+        self._right_panel_vertical_resizer.set_source_of_events(sizegrip)
+
+        # Table area
+        table_area = ttk.Frame(right)
+        table_area.pack(side=tk.TOP, fill=tk.BOTH)
+        table_area.config(height=450)
+        table_area.pack_propagate(False)
+        self._build_status(table_area)
+        self._build_results(table_area)
 
     def _create_scrollable_container(self, parent: tk.Widget, hscroll: bool = False):
         area = ScrollableArea(parent=parent, hscroll=hscroll)
@@ -152,7 +179,7 @@ class QueryBuilderWindow(tk.Toplevel):
         for cls in KNOWN_PREDICATES:
             label = cls().describe()
             row = ttk.Frame(palette)
-            row.pack(fill=tk.X, pady=1)
+            row.pack(fill=tk.X, pady=1, padx=(_LEFT_LEFT_PAD_PX, 0))
             ttk.Button(
                 row,
                 text="+",
@@ -168,20 +195,22 @@ class QueryBuilderWindow(tk.Toplevel):
             ttk.Label(row, text=label, anchor="w").pack(side=tk.LEFT, padx=(2, 0))
 
     def _build_presets(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="User Presets").pack(anchor=tk.W, pady=(10, 0))
+        ttk.Label(parent, text="User Presets").pack(
+            anchor=tk.W, pady=(10, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
+        )
         palette = self._create_scrollable_container(parent)
         self._preset_list = tk.Listbox(palette, height=6)
-        self._preset_list.pack(fill=tk.Y, expand=True)
+        self._preset_list.pack(fill=tk.Y, expand=True, padx=(_LEFT_LEFT_PAD_PX, 0))
         self._preset_list.bind("<<ListboxSelected>>", self._on_preset_selected)
         ttk.Button(palette, text="Load", command=self._load_selected_preset).pack(
-            fill=tk.X, pady=(2, 0)
+            fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
         )
 
         ttk.Label(palette, text="Save current as:").pack(anchor=tk.W, pady=(10, 0))
         self._save_entry = ttk.Entry(palette)
-        self._save_entry.pack(fill=tk.X)
+        self._save_entry.pack(fill=tk.X, padx=(_LEFT_LEFT_PAD_PX, 0))
         ttk.Button(palette, text="Save preset", command=self._save_current).pack(
-            fill=tk.X, pady=(2, 0)
+            fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
         )
         self._reload_presets()
 
@@ -198,40 +227,23 @@ class QueryBuilderWindow(tk.Toplevel):
             side=tk.LEFT, padx=(6, 0)
         )
 
-    def _build_builder(self, parent: tk.Widget) -> None:
-        """Builder area: lines inside a two-direction scrollable canvas.
-
-        Lines are packed into ``self._lines_container`` -- the inner frame that
-        lives inside the canvas. The canvas owns the scrollbars and keeps the
-        scroll region in sync as lines and their widgets are added, so a line
-        full of widgets (or many lines) scrolls instead of running off-screen.
-        """
-        # Outer wrapper owns the vertical layout: [canvas row] over [hscroll].
-        # Keeping the hscroll inside this block means it never fights the
-        # status/results strip that is packed later into ``parent``.
-        outer = ttk.Frame(parent)
-        outer.pack(fill=tk.BOTH, expand=True)
-        self._lines_container = self._create_scrollable_container(outer, True)
-
     def _build_results(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="Results").pack(anchor=tk.W, pady=(10, 0))
-        container = ttk.Frame(parent)
-        container.pack(fill=tk.X)
+        ttk.Label(parent, text="Results").pack(anchor=tk.W, pady=(10, 0), side=tk.TOP)
         columns = ("system", "body", "mineral", "note", "lat", "lon")
         self._result_tree = ttk.Treeview(
-            container, columns=columns, show="headings", height=8
+            parent, columns=columns, show="headings", height=8
         )
         for col in columns:
             self._result_tree.column(col, width=90 if col != "note" else 200)
             self._result_tree.heading(col, text=col.capitalize())
         scrollbar = ttk.Scrollbar(
-            container,
+            parent,
             orient="vertical",
             command=self._result_tree.yview,  # type: ignore
         )
         self._result_tree.configure(yscrollcommand=scrollbar.set)
-        self._result_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._result_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, anchor=tk.SW)
 
     def _build_status(self, parent: tk.Widget) -> None:
         status = ttk.Frame(parent)
