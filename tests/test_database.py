@@ -714,6 +714,41 @@ def test_update_existing_star_coords_never_creates(db: DatabaseManager):
     assert _star_row_count(db, "Nowhere") == 0
 
 
+def _star_systemid(db: DatabaseManager, system: str):
+    conn = db._get_connection()  # type: ignore
+    return conn.execute(
+        "SELECT systemid FROM star_systems WHERE star_name = ?", (system,)
+    ).fetchone()[0]
+
+
+def test_update_existing_star_coords_backfills_null_systemid(db: DatabaseManager):
+    # A spot creates the star row with a NULL world key.
+    db.add_spot(_spot("Delta", "Kepler-9 f", 5.0, 6.0))
+    assert _star_systemid(db, "Delta") is None
+
+    # A later jump carries SystemAddress -> the NULL must be filled in.
+    updated = db.update_existing_star_coords(
+        StarSystem(star_name="Delta", systemid=42, x=1.0, y=2.0, z=3.0)
+    )
+    assert updated == 4
+    assert _star_systemid(db, "Delta") == 42
+
+
+def test_update_existing_star_coords_never_overwrites_systemid(db: DatabaseManager):
+    # An existing world key is sacred: a later event must not clobber it.
+    with db._get_connection() as conn:  # type: ignore
+        conn.execute(
+            "INSERT INTO star_systems (star_name, systemid) VALUES ('Eps', 7)"
+        )
+    assert (
+        db.update_existing_star_coords(
+            StarSystem(star_name="Eps", systemid=999, x=1.0, y=2.0, z=3.0)
+        )
+        == 3
+    )
+    assert _star_systemid(db, "Eps") == 7
+
+
 # ---- query_spots (predicate engine) ----------------------------------------
 
 

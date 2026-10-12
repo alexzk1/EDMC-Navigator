@@ -208,24 +208,29 @@ class DatabaseManager:
         return system.star_id
 
     def update_existing_star_coords(self, system: StarSystem) -> int:
-        """Updates x/y/z for an existing star row that still holds NULLs.
+        """Updates x/y/z (and ``systemid``) for an existing star row that still
+        holds NULLs.
 
-        Never creates a row - only fills in coordinates for a system already in
-        the table (a repeat visit). Coordinates that are still ``None`` on
-        ``system`` are skipped, so partial updates compose cleanly. Returns how
-        many columns were updated (0-3); a system not in the table is left
-        untouched.
+        Never creates a row - only fills in coordinates and the world key for a
+        system already in the table (a repeat visit, or a jump that arrives with
+        data the first sighting lacked). Values that are still ``None`` on
+        ``system`` are skipped, so partial updates compose cleanly. Existing
+        values are never overwritten. Returns how many columns were updated
+        (0-4); a system not in the table is left untouched.
         """
         with self._get_connection() as conn:
             cur = conn.execute(
-                "SELECT star_id, x, y, z FROM star_systems WHERE star_name = ?",
+                "SELECT star_id, systemid, x, y, z FROM star_systems "
+                "WHERE star_name = ?",
                 (system.star_name,),
             )
             row = cur.fetchone()
             if row is None:
                 return 0
-            existing_id, ex_x, ex_y, ex_z = row
-            updates: dict[str, float] = {}
+            existing_id, existing_sid, ex_x, ex_y, ex_z = row
+            updates: dict[str, object] = {}
+            if system.systemid is not None and existing_sid is None:
+                updates["systemid"] = system.systemid
             if system.x is not None and ex_x is None:
                 updates["x"] = system.x
             if system.y is not None and ex_y is None:
