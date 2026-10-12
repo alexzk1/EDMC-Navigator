@@ -29,10 +29,11 @@ from ..database import DatabaseManager, StarNotFoundError
 from ..icons_cache import IconsCache
 from ..models import SurfaceSpot
 from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint, in_game_timestamp
-from ..star_resolver import StarApiClient
 from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
 from ..scrollable_area import ScrollableArea
+from ..star_resolver import StarApiClient
+from ..ui_tooltip import Tooltip
 from ..vertical_resize_handler import VerticalResizeHandler
 from .base import DataContext
 from .line_widget import LineWidget
@@ -77,6 +78,18 @@ class QueryBuilderWindow(tk.Toplevel):
 
         self._lines: list[LineWidget] = []
         self._active_line: LineWidget | None = None
+
+        # Widget references for tooltips (see ``_bind_tooltips``).
+        self._run_btn: ttk.Button
+        self._top_not_btn: ttk.Checkbutton
+        self._add_line_btn: ttk.Button
+        self._remove_line_btn: ttk.Button
+        self._reset_builder_btn: ttk.Button
+        self._load_btn: ttk.Button
+        self._save_preset_btn: ttk.Button
+        self._gc_all_btn: ttk.Button
+        self._gc_recent_btn: ttk.Button
+        self._palette_header: ttk.Label
 
         self._build_ui()
         self._add_line()
@@ -147,10 +160,12 @@ class QueryBuilderWindow(tk.Toplevel):
         right_header = ttk.Frame(right)
         right_header.pack(fill=tk.X)
         self._top_not = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self._top_not_btn = ttk.Checkbutton(
             right_header, text="🔁 Neg the whole query.", variable=self._top_not
-        ).pack(side=tk.RIGHT)
-        ttk.Button(right_header, text="🔎 Run", command=self._run).pack(side=tk.RIGHT)
+        )
+        self._top_not_btn.pack(side=tk.RIGHT)
+        self._run_btn = ttk.Button(right_header, text="🔎 Run", command=self._run)
+        self._run_btn.pack(side=tk.RIGHT)
         self._add_line_controls(right)
 
         # Lines area
@@ -176,12 +191,73 @@ class QueryBuilderWindow(tk.Toplevel):
         self._build_status(table_area)
         self._build_results(table_area)
 
+        # Attach hover tooltips to the main controls once every widget exists.
+        self._bind_tooltips()
+
+    def _bind_tooltips(self) -> None:
+        """Attach a short, static hover tooltip to each main control.
+
+        One :class:`Tooltip` per widget -- a one or two sentence description of
+        what the control does. Kept in a single method so the set is easy to
+        review and extend as more controls are added.
+        """
+        Tooltip(
+            self._result_tree,
+            "Search results. Right-click a row to copy the name or coordinates, "
+            "or open the system on EDSM.",
+        )
+        Tooltip(
+            self._run_btn,
+            "Run the built query against the database and show matching spots.",
+        )
+        Tooltip(
+            self._top_not_btn,
+            "Negate the entire query -- every result is inverted.",
+        )
+        Tooltip(
+            self._add_line_btn,
+            "Add a new condition line. Multiple lines are combined with OR.",
+        )
+        Tooltip(
+            self._remove_line_btn,
+            "Remove the last condition line.",
+        )
+        Tooltip(
+            self._reset_builder_btn,
+            "Clear all lines and start the builder over.",
+        )
+        Tooltip(
+            self._palette_header,
+            "Conditions. Use + to add a condition, ¬ to negate it.",
+        )
+        Tooltip(
+            self._load_btn,
+            "Load the selected preset into the builder.",
+        )
+        Tooltip(
+            self._save_preset_btn,
+            "Save the current query as a named preset.",
+        )
+        Tooltip(
+            self._preset_list,
+            "Saved presets. Select one, then click Load.",
+        )
+        Tooltip(
+            self._gc_all_btn,
+            "Delete every temporary mark right away. Temporary marks are short-lived (often automatic) bookmarks.",
+        )
+        Tooltip(
+            self._gc_recent_btn,
+            "Delete temporary marks older than the shown age. Temporary marks are short-lived (often automatic) bookmarks.",
+        )
+
     def _create_scrollable_container(self, parent: tk.Widget, hscroll: bool = False):
         area = ScrollableArea(parent=parent, hscroll=hscroll)
         return area.controls_area
 
     def _build_palette(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="🔣 Conditions Palette").pack(anchor=tk.W)
+        self._palette_header = ttk.Label(parent, text="🔣 Conditions Palette")
+        self._palette_header.pack(anchor=tk.W)
         palette = self._create_scrollable_container(parent)
         for cls in KNOWN_PREDICATES:
             label = cls().describe()
@@ -209,30 +285,35 @@ class QueryBuilderWindow(tk.Toplevel):
         self._preset_list = tk.Listbox(palette, height=6)
         self._preset_list.pack(fill=tk.Y, expand=True, padx=(_LEFT_LEFT_PAD_PX, 0))
         self._preset_list.bind("<<ListboxSelected>>", self._on_preset_selected)
-        ttk.Button(palette, text="📂 Load", command=self._load_selected_preset).pack(
-            fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
+        self._load_btn = ttk.Button(
+            palette, text="📂 Load", command=self._load_selected_preset
         )
+        self._load_btn.pack(fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0))
 
         ttk.Label(palette, text="⌨️ Save current as:").pack(anchor=tk.W, pady=(10, 0))
         self._save_entry = ttk.Entry(palette)
         self._save_entry.pack(fill=tk.X, padx=(_LEFT_LEFT_PAD_PX, 0))
-        ttk.Button(palette, text="💾 Save preset", command=self._save_current).pack(
-            fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
+        self._save_preset_btn = ttk.Button(
+            palette, text="💾 Save preset", command=self._save_current
         )
+        self._save_preset_btn.pack(fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0))
         self._reload_presets()
 
     def _add_line_controls(self, parent: tk.Widget) -> None:
         controls = ttk.Frame(parent)
         controls.pack(fill=tk.X)
-        ttk.Button(controls, text="＋ Add Line", command=self._add_line).pack(
-            side=tk.LEFT
+        self._add_line_btn = ttk.Button(
+            controls, text="＋ Add Line", command=self._add_line
         )
-        ttk.Button(controls, text="− Remove Line", command=self._remove_last_line).pack(
-            side=tk.LEFT, padx=(6, 0)
+        self._add_line_btn.pack(side=tk.LEFT)
+        self._remove_line_btn = ttk.Button(
+            controls, text="− Remove Line", command=self._remove_last_line
         )
-        ttk.Button(controls, text="🗑️ Reset Builder", command=self._reset_builder).pack(
-            side=tk.LEFT, padx=(6, 0)
+        self._remove_line_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self._reset_builder_btn = ttk.Button(
+            controls, text="🗑️ Reset Builder", command=self._reset_builder
         )
+        self._reset_builder_btn.pack(side=tk.LEFT, padx=(6, 0))
 
     def _build_results(self, parent: tk.Widget) -> None:
         ttk.Label(parent, text="👉 Results").pack(
@@ -296,14 +377,16 @@ class QueryBuilderWindow(tk.Toplevel):
         status.pack(fill=tk.X, pady=(6, 0))
         self._status = ttk.Label(status, text="")
         self._status.pack(side=tk.LEFT)
-        ttk.Button(
+        self._gc_all_btn = ttk.Button(
             status, text="🧹 Clear all temporaries", command=lambda: self._gc(0)
-        ).pack(side=tk.RIGHT, padx=(5, 20), pady=5)
-        ttk.Button(
+        )
+        self._gc_all_btn.pack(side=tk.RIGHT, padx=(5, 20), pady=5)
+        self._gc_recent_btn = ttk.Button(
             status,
             text=f"🧹 Clear temporaries > {_GC_LAST_HOUR_SECS // 60} min",
             command=lambda: self._gc(_GC_LAST_HOUR_SECS),
-        ).pack(side=tk.RIGHT)
+        )
+        self._gc_recent_btn.pack(side=tk.RIGHT)
 
     def _gc(self, age_secs: int):
         self.db_manager.gc_temporaries(age_secs)
@@ -437,13 +520,13 @@ class QueryBuilderWindow(tk.Toplevel):
                 tk.END,
                 values=(
                     " ".join(parts) if parts else "—",  # full_name (visible)
-                    spot.mineral_type or "—",            # mineral
-                    spot.notes or "",                    # note
+                    spot.mineral_type or "—",  # mineral
+                    spot.notes or "",  # note
                     self._format_visit_time(spot.last_visit_time),  # visit
-                    round(spot.latitude, 4),             # lat
-                    round(spot.longitude, 4),            # lon
-                    spot.star_system or "",              # system (hidden)
-                    spot.body_name or "",                # body (hidden)
+                    round(spot.latitude, 4),  # lat
+                    round(spot.longitude, 4),  # lon
+                    spot.star_system or "",  # system (hidden)
+                    spot.body_name or "",  # body (hidden)
                 ),
             )
         self._status.config(text=f"{len(spots)} result(s)")
@@ -470,8 +553,10 @@ class QueryBuilderWindow(tk.Toplevel):
         dismisses the menu. A right-click outside a row (or on a row with no
         system) does nothing.
         """
-        item = self._result_tree.identify_row(event.y)
-        if item is None:
+        # ``identify_row`` returns ``None`` when the click lands on empty space,
+        # not a row -- the stubs only say ``str``, so annotate explicitly.
+        item: str | None = self._result_tree.identify_row(event.y)
+        if item is None:  # type: ignore
             return
         # ``system`` lives in a hidden column -- the menu needs it separately
         # from the displayed ``full_name``: copy the name, link the system.
@@ -499,7 +584,9 @@ class QueryBuilderWindow(tk.Toplevel):
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Copy Name", command=lambda: self._copy(full_name))
         menu.add_command(label="Copy Location", command=lambda: self._copy(location))
-        menu.add_command(label="Visit on EDSM", command=lambda: self._visit_edsm(system))
+        menu.add_command(
+            label="Visit on EDSM", command=lambda: self._visit_edsm(system)
+        )
         menu.add_separator()
         menu.add_command(label="Cancel", command=menu.destroy)
         return menu
@@ -532,7 +619,7 @@ class QueryBuilderWindow(tk.Toplevel):
         def worker() -> None:
             try:
                 url = StarApiClient().edsm_system_url(system)
-            except Exception:  # noqa: BLE001 - surface any unexpected failure
+            except Exception:
                 logger.exception("Failed to build EDSM URL for %r", system)
                 self.after(0, lambda: self._show_edsm_warning(system, "open"))
                 return
