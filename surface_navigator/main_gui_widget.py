@@ -16,6 +16,7 @@ from .player_location import (
 )
 from .presets import PresetManager
 from .spot_flags import SurfaceSpotFlags
+from .ui_tooltip import Tooltip
 
 
 def render_note(spot: SurfaceSpot) -> str:
@@ -88,13 +89,15 @@ class MainGUIWidget(ttk.Frame):
         )
         self._btn_add.pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(toolbar, text="🧭 Navigate To", command=self._on_navigate).pack(
-            side=tk.RIGHT, padx=2
+        self._btn_navigate = ttk.Button(
+            toolbar, text="🧭 Navigate To", command=self._on_navigate
         )
+        self._btn_navigate.pack(side=tk.RIGHT, padx=2)
 
-        ttk.Button(toolbar, text="💼 Manage", command=self._open_query_builder).pack(
-            side=tk.RIGHT, padx=2
+        self._btn_manage = ttk.Button(
+            toolbar, text="💼 Manage", command=self._open_query_builder
         )
+        self._btn_manage.pack(side=tk.RIGHT, padx=2)
 
         # Treeview with scrollbar
         tree_container = ttk.Frame(main_container)
@@ -139,6 +142,29 @@ class MainGUIWidget(ttk.Frame):
 
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Static hover tooltips -- nothing here changes at runtime, so one pass
+        # in ``_setup_ui`` covers every control.
+        self._bind_tooltips()
+
+    def _bind_tooltips(self) -> None:
+        """Attach a short, static hover tooltip to each main control."""
+        Tooltip(
+            self._tree,
+            "Your saved surface spots in current system or on current body.\nSelect one, then navigate to it.",
+        )
+        Tooltip(
+            self._btn_add,
+            "Record a surface spot at your current location or at any manually entered.",
+        )
+        Tooltip(
+            self._btn_navigate,
+            "Show direction to the selected spot on overlay. Select a row first.",
+        )
+        Tooltip(
+            self._btn_manage,
+            "Advanced usage of the local spots database.",
+        )
 
     def _sync_view_columns(self, missing_body: bool):
         """Toggle the ``body`` and ``#`` (numbering) columns for the current view.

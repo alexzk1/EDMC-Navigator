@@ -120,7 +120,7 @@ class Tooltip:
             try:
                 if self._tipwindow:
                     self._tipwindow.destroy()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
             self._tipwindow = None
 
