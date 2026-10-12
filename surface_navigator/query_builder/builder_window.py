@@ -16,6 +16,7 @@ builder -- so the builder stays a pure selection surface.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import threading
 import tkinter as tk
@@ -27,8 +28,8 @@ from typing import Any
 from ..database import DatabaseManager, StarNotFoundError
 from ..icons_cache import IconsCache
 from ..models import SurfaceSpot
+from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint, in_game_timestamp
 from ..star_resolver import StarApiClient
-from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint
 from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
 from ..scrollable_area import ScrollableArea
@@ -237,13 +238,46 @@ class QueryBuilderWindow(tk.Toplevel):
         ttk.Label(parent, text="👉 Results").pack(
             anchor=tk.W, pady=(10, 0), side=tk.TOP
         )
-        columns = ("system", "body", "mineral", "note", "lat", "lon")
+        # ``full_name`` is what the player reads (``system body``). ``system``
+        # and ``body`` stay as *hidden* columns: the context menu still needs
+        # them separately to copy the full name and to build the EDSM link.
+        columns = (
+            "full_name",
+            "mineral",
+            "note",
+            "visit",
+            "lat",
+            "lon",
+            "system",
+            "body",
+        )
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
         )
+        column_headers = {
+            "full_name": "System/Body",
+            "mineral": "Mineral",
+            "note": "Note",
+            "visit": "Visited",
+            "lat": "Lat",
+            "lon": "Lon",
+        }
+        column_widths = {
+            "full_name": 180,
+            "mineral": 90,
+            "note": 200,
+            "visit": 110,
+            "lat": 70,
+            "lon": 70,
+        }
         for col in columns:
-            self._result_tree.column(col, width=90 if col != "note" else 200)
-            self._result_tree.heading(col, text=col.capitalize())
+            if col in ("system", "body"):
+                # Hidden, but kept: the context menu reads these by name.
+                self._result_tree.column(col, width=0, stretch=False)
+                self._result_tree.heading(col, text="")
+                continue
+            self._result_tree.column(col, width=column_widths[col])
+            self._result_tree.heading(col, text=column_headers[col])
         scrollbar = ttk.Scrollbar(
             parent,
             orient="vertical",
@@ -397,40 +431,59 @@ class QueryBuilderWindow(tk.Toplevel):
     def _show_results(self, spots: list[SurfaceSpot]) -> None:
         self._clean_results()
         for spot in spots:
+            parts = [p for p in (spot.star_system, spot.body_name) if p]
             self._result_tree.insert(
                 "",
                 tk.END,
                 values=(
-                    spot.star_system or "—",
-                    spot.body_name or "—",
-                    spot.mineral_type or "—",
-                    spot.notes or "",
-                    round(spot.latitude, 4),
-                    round(spot.longitude, 4),
+                    " ".join(parts) if parts else "—",  # full_name (visible)
+                    spot.mineral_type or "—",            # mineral
+                    spot.notes or "",                    # note
+                    self._format_visit_time(spot.last_visit_time),  # visit
+                    round(spot.latitude, 4),             # lat
+                    round(spot.longitude, 4),            # lon
+                    spot.star_system or "",              # system (hidden)
+                    spot.body_name or "",                # body (hidden)
                 ),
             )
         self._status.config(text=f"{len(spots)} result(s)")
+
+    @staticmethod
+    def _format_visit_time(dt: datetime.datetime | None) -> str:
+        """Formats a visit time in the in-game calendar (``3312-10-12 14:30``).
+
+        ``None`` (never visited) renders as ``—`` so the column stays uniform.
+        """
+        if dt is None:
+            return "—"
+        return in_game_timestamp(now=dt)
 
     # -- results context menu ---------------------------------------------
     def _on_context_menu(self, event: Any) -> None:
         """Show the results-table context menu at the cursor.
 
-        The menu acts on the row under the cursor: **Copy System** puts the
-        system name on the clipboard, **Visit on EDSM** fetches the EDSM page
-        (one ``/api-v1/system`` call for the system ``id``) and opens it in the
-        default browser, and **Cancel** just dismisses the menu. A right-click
-        outside a row (or on a row with no system) does nothing.
+        The menu acts on the row under the cursor: **Copy Name** puts the full
+        (``system body``) name on the clipboard, **Copy Location** puts the
+        coordinates as a ``{"lat": ..., "lon": ...}`` dict literal, **Visit on
+        EDSM** fetches the EDSM page (one ``/api-v1/system`` call for the system
+        ``id``) and opens it in the default browser, and **Cancel** just
+        dismisses the menu. A right-click outside a row (or on a row with no
+        system) does nothing.
         """
         item = self._result_tree.identify_row(event.y)
         if item is None:
             return
-        values = self._result_tree.item(item, "values")
-        if not values:
-            return
-        system = values[0]  # "system" is the first column.
+        # ``system`` lives in a hidden column -- the menu needs it separately
+        # from the displayed ``full_name``: copy the name, link the system.
+        system = self._result_tree.set(item, "system")
         if not system or system in ("", "—"):
             return
-        menu = self._build_context_menu(system)
+        full_name = self._result_tree.set(item, "full_name")
+        location = self._format_location(
+            self._result_tree.set(item, "lat"),
+            self._result_tree.set(item, "lon"),
+        )
+        menu = self._build_context_menu(full_name, location, system)
         # ``tk_popup`` takes *absolute* screen coords (``x_root``/``y_root``), so
         # the menu lands exactly under the cursor regardless of where the tree
         # sits inside the window. ``grab_release`` undoes the grab ``tk_popup``
@@ -440,18 +493,32 @@ class QueryBuilderWindow(tk.Toplevel):
         finally:
             menu.grab_release()
 
-    def _build_context_menu(self, system: str) -> tk.Menu:
+    def _build_context_menu(
+        self, full_name: str, location: str, system: str
+    ) -> tk.Menu:
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Copy System", command=lambda: self._copy_system(system))
+        menu.add_command(label="Copy Name", command=lambda: self._copy(full_name))
+        menu.add_command(label="Copy Location", command=lambda: self._copy(location))
         menu.add_command(label="Visit on EDSM", command=lambda: self._visit_edsm(system))
         menu.add_separator()
         menu.add_command(label="Cancel", command=menu.destroy)
         return menu
 
-    def _copy_system(self, system: str) -> None:
-        """Copy a system name to the clipboard."""
+    @staticmethod
+    def _format_location(lat: str, lon: str) -> str:
+        """Coordinates as a dict literal: ``{"lat": 0.5, "lon": 1.2}``.
+
+        The same text is both a valid Python dict literal and valid JSON, so it
+        pastes cleanly into scripts (``ast.literal_eval`` / ``json.loads``) and
+        web tools alike. ``lat``/``lon`` are the rounded values shown in the
+        table, so the copy always matches what the player sees.
+        """
+        return f'{{"lat": {lat}, "lon": {lon}}}'
+
+    def _copy(self, text: str) -> None:
+        """Copy ``text`` to the clipboard."""
         self.clipboard_clear()
-        self.clipboard_append(system)
+        self.clipboard_append(text)
         self.update_idletasks()
 
     def _visit_edsm(self, system: str) -> None:
