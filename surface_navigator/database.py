@@ -90,7 +90,7 @@ class DatabaseManager:
         """
         import datetime
 
-        return datetime.datetime.now(datetime.timezone.utc).isoformat()
+        return datetime.datetime.now(datetime.timezone.utc).isoformat()  # noqa: UP017
 
     def _init_db(self):
         with self._get_connection() as conn:
@@ -468,6 +468,54 @@ class DatabaseManager:
         )
         return self.add_spot(spot)
 
+    def update_tritium_ring_visit(
+        self,
+        star: str | StarSystem,
+        body: str,
+    ):
+        """Refreshes ``last_visit_time`` for a confirmed tritium ring.
+
+        Rings live in ``surface_spots`` with dummy coordinates, so matching is
+        by name, not by proximity. The ``TRITIUM_RING_PRESENT`` guard means a
+        ring the scanner never confirmed -- e.g. a hand-written DB fake -- is
+        left alone until the scanner reports it.
+        """
+        if isinstance(star, StarSystem):
+            star_name = star.star_name
+        else:
+            star_name = star
+        if not star_name or not body:
+            return
+
+        sql = f"""
+            UPDATE surface_spots
+            SET last_visit_time = ?
+            WHERE id IN (
+                SELECT surface_spots.id
+                {_SPOTS_FROM}
+                WHERE star_systems.star_name = ?
+                  AND body_name = ?
+                  AND (flags & ?) != 0
+            )
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    sql,
+                    (
+                        self._now_utc(),
+                        star_name,
+                        body,
+                        SurfaceSpotFlags.TRITIUM_RING_PRESENT.value,
+                    ),
+                )
+        except sqlite3.Error as e:
+            logger.error(f"Database error during update_tritium_ring_visit: {e}")
+            return
+
+        # Let the transaction to finish!
+        dispatcher.dispatch(KnownEvents.DATABASE_MODIFIED, EventParams())
+
     @staticmethod
     def _fetch_select_cursor(cursor: sqlite3.Cursor) -> list[SurfaceSpot]:
         """Does actual fetch from the cursor and validates datetime."""
@@ -598,7 +646,7 @@ class DatabaseManager:
         import datetime
 
         cutoff = (
-            datetime.datetime.now(datetime.timezone.utc)
+            datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017
             - datetime.timedelta(seconds=age_secs)
         ).strftime("%Y-%m-%d %H:%M:%S")
 

@@ -109,6 +109,8 @@ class SurfaceNavigatorPlugin:
         )
         if event_name == "SAASignalsFound":
             self._handle_ring_scan(entry)
+        if event_name == "SupercruiseExit":
+            self._handle_ring_visit(entry)
         if event_name == "CodexEntry":
             self._handle_codex_entry(entry)
 
@@ -370,6 +372,28 @@ class SurfaceNavigatorPlugin:
             )
             if added:
                 break
+
+    def _handle_ring_visit(self, entry: Mapping[str, Any]) -> None:
+        """Marks a tritium ring as visited on ``SupercruiseExit``.
+
+        Exiting supercruise *inside* a planetary ring fires this event with
+        ``BodyType == "PlanetaryRing"`` and the ring's full name -- the same
+        name the scanner reported. Stripping the system prefix makes it match
+        the record stored by ``_handle_ring_scan``. We only touch rows that
+        already carry the ``TRITIUM_RING_PRESENT`` flag: a ring the scanner
+        never confirmed (e.g. a hand-written DB fake) is not trusted yet.
+        """
+        if entry.get("BodyType") != "PlanetaryRing":
+            return
+        body = entry.get("Body")
+        if not body:
+            return
+        system_name = self.last_system.star_name
+        ring_name = self._clean_body_name(system_name, body)
+        self.db_manager.update_tritium_ring_visit(
+            star=self.last_system,
+            body=ring_name,
+        )
 
     def _handle_codex_entry(self, entry: Mapping[str, Any]) -> None:
         """Drops a short-lived temporary mark for a scanned surface object.
