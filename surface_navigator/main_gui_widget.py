@@ -60,6 +60,11 @@ class MainGUIWidget(ttk.Frame):
         self.current_location: PlayerLocation | None = None
         self.current_system: StarSystem | None = None
 
+        # Reference to the single floating builder, or None when closed.
+        # We never cache an "open" flag: a self-destroyed builder reports
+        # winfo_exists() == 0, so this double as the "is it alive" check.
+        self._query_builder: Any = None
+
         self._setup_ui()
         self._load_data()
 
@@ -355,11 +360,21 @@ class MainGUIWidget(ttk.Frame):
         The builder is a ``Toplevel`` so it can float on a second monitor while
         the main window stays usable. Destructive actions stay on explicit
         buttons inside the builder -- never inline in the builder itself.
+
+        Only one builder exists at a time: a repeat click raises the
+        already-open window instead of spawning a second one.
         """
+        builder = self._query_builder
+        if builder is not None and builder.winfo_exists():
+            # Already open (possibly on another monitor): bring it forward.
+            builder.raise_window()
+            builder.focus_set()
+            return
+
         from .query_builder.builder_window import QueryBuilderWindow
 
         parent: Any = self.winfo_toplevel()
-        QueryBuilderWindow(
+        self._query_builder = QueryBuilderWindow(
             parent,
             db_manager=self.db_manager,
             preset_manager=self.preset_manager,
