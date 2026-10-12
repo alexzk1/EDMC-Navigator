@@ -381,7 +381,7 @@ def _insert_raw(
 
 
 def test_gc_temporaries_deletes_only_old_marks(db: DatabaseManager):
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017
     old = (now - datetime.timedelta(seconds=10_000)).isoformat()
     recent = (now - datetime.timedelta(seconds=10)).isoformat()
     temp_flag = SurfaceSpotFlags.IS_TEMPORARY_MARK.value
@@ -719,9 +719,7 @@ def test_update_existing_star_coords_backfills_null_systemid(db: DatabaseManager
 def test_update_existing_star_coords_never_overwrites_systemid(db: DatabaseManager):
     # An existing world key is sacred: a later event must not clobber it.
     with db._get_connection() as conn:  # type: ignore
-        conn.execute(
-            "INSERT INTO star_systems (star_name, systemid) VALUES ('Eps', 7)"
-        )
+        conn.execute("INSERT INTO star_systems (star_name, systemid) VALUES ('Eps', 7)")
     assert (
         db.update_existing_star_coords(
             StarSystem(star_name="Eps", systemid=999, x=1.0, y=2.0, z=3.0)
@@ -755,8 +753,11 @@ def test_query_spots_scoped_to_system(db: DatabaseManager):
 
 def test_query_spots_unbounded_raises(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    # ``MineralIs(None)`` has no mineral -> validate_context raises InvalidContext
+    # (a ValueError). With every leaf predicate now validating its required
+    # input, this is how a no-filter query fails today.
     with pytest.raises(ValueError):
-        db.query_spots(MineralIs(None), QueryContext())  # no scope, no real filter
+        db.query_spots(MineralIs(None), QueryContext())
 
 
 def test_query_spots_bounded_by_predicate(db: DatabaseManager):
@@ -768,11 +769,16 @@ def test_query_spots_bounded_by_predicate(db: DatabaseManager):
     assert [sp.star_system for sp in result] == ["Alpha"]
 
 
-def test_query_spots_allow_unbounded(db: DatabaseManager):
+def test_query_spots_missing_input_raises_even_when_unbounded(
+    db: DatabaseManager,
+):
+    """A missing required input raises InvalidContext even with
+    ``allow_unbounded=True`` -- validate_context runs before the unbounded-query
+    guard, so a predicate that needs data and has none fails loudly."""
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
     db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
-    result = db.query_spots(MineralIs(None), QueryContext(), allow_unbounded=True)
-    assert len(result) == 2
+    with pytest.raises(InvalidContext):
+        db.query_spots(MineralIs(None), QueryContext(), allow_unbounded=True)
 
 
 def test_query_spots_within_light_years_includes_null_coords(db: DatabaseManager):
@@ -902,7 +908,7 @@ def test_query_spots_search_in_exact_system(db: DatabaseManager):
     # Beta already has a row (via add_spot) but with NULL coords -- give it a
     # complete coordinate set so the search has the data it needs and does not
     # need to trigger the resolver (this test only checks name scoping).
-    db._get_or_create_star(StarSystem(star_name="Beta", x=11.0, y=21.0, z=22.0))
+    db._get_or_create_star(StarSystem(star_name="Beta", x=11.0, y=21.0, z=22.0))  # type: ignore
 
     result = db.query_spots(SearchInExactSystem("Beta"), QueryContext())
     assert [sp.star_system for sp in result] == ["Beta", "Beta"]
@@ -916,7 +922,7 @@ def test_query_spots_search_in_exact_system_composes(db: DatabaseManager):
     # Alpha has a row but with NULL coords -- complete it so the search has
     # coordinates and does not trigger the resolver (this test checks AND
     # composition, not resolution).
-    db._get_or_create_star(StarSystem(star_name="Alpha", x=10.0, y=20.0, z=20.0))
+    db._get_or_create_star(StarSystem(star_name="Alpha", x=10.0, y=20.0, z=20.0))  # type: ignore
 
     result = db.query_spots(
         And(SearchInExactSystem("Alpha"), MineralIs("silver")),
@@ -987,17 +993,15 @@ def test_query_spots_search_in_current_system(db: DatabaseManager):
     assert [sp.star_system for sp in result] == ["Beta"]
 
 
-def test_query_spots_search_in_current_system_unset_matches_all(db: DatabaseManager):
-    """With no current system known, the current-system predicate imposes no
-    system restriction -- so it spans every system. It is still an effectively
-    unbounded query on its own, hence ``allow_unbounded``."""
+def test_query_spots_search_in_current_system_unset_raises(db: DatabaseManager):
+    """With no current system known, the current-system predicate can't be
+    evaluated -- it raises InvalidContext rather than silently spanning every
+    system. ``allow_unbounded`` does not bypass ``validate_context``."""
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
     db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
 
-    result = db.query_spots(
-        SearchInCurrentSystem(), QueryContext(), allow_unbounded=True
-    )
-    assert {sp.star_system for sp in result} == {"Alpha", "Beta"}
+    with pytest.raises(InvalidContext):
+        db.query_spots(SearchInCurrentSystem(), QueryContext(), allow_unbounded=True)
 
 
 def _tritium_ring_spot(system: str, body: str) -> SurfaceSpot:

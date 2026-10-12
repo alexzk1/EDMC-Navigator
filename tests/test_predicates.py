@@ -148,6 +148,36 @@ def test_validate_context_or_reports_first_bad_child():
         )
 
 
+def test_mineral_validate_context_needs_name():
+    # No mineral entered -> can't render a filter, so it must not silently
+    # match everything.
+    with pytest.raises(InvalidContext, match="mineral"):
+        MineralIs(None).validate_context(_ctx())
+
+
+def test_on_body_validate_context_needs_body():
+    with pytest.raises(InvalidContext, match="body"):
+        OnBody(None).validate_context(_ctx())
+
+
+def test_search_in_exact_system_validate_context_needs_name():
+    with pytest.raises(InvalidContext, match="system"):
+        SearchInExactSystem(None).validate_context(_ctx())
+
+
+def test_search_in_current_system_validate_context_needs_system():
+    # No current system known (game not running) -> can't evaluate.
+    with pytest.raises(InvalidContext, match="current system"):
+        SearchInCurrentSystem().validate_context(_ctx())
+
+
+def test_within_light_years_of_star_validate_context_needs_inputs():
+    with pytest.raises(InvalidContext):
+        WithinLightYearsOfStar(None, "Sol").validate_context(_ctx())
+    with pytest.raises(InvalidContext):
+        WithinLightYearsOfStar(5.0, None).validate_context(_ctx())
+
+
 # ---- MineralIs (fuzzy + original SQL) --------------------------------------
 
 

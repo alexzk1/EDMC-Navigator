@@ -37,6 +37,20 @@ class EventDispatcher:
             self._listeners[event_type] = []
         self._listeners[event_type].append(callback)
 
+    def unsubscribe(self, event_type: str, callback: EventCallback):
+        """Remove a previously registered callback.
+
+        Callers that subscribe to a long-lived event (e.g. the query builder
+        listening for ``POSITION_UPDATED``) must call this on teardown --
+        otherwise the dispatcher keeps a reference to the (now destroyed)
+        callback and its window for the life of the process.
+        """
+        listeners = self._listeners.get(event_type)
+        if listeners and callback in listeners:
+            listeners.remove(callback)
+            if not listeners:
+                del self._listeners[event_type]
+
     def dispatch(self, event_type: str, params: EventParams):
         if event_type in self._listeners:
             for callback in self._listeners[event_type]:

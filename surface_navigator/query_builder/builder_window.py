@@ -26,10 +26,21 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 from ..database import DatabaseManager, StarNotFoundError
+from ..events_dispatcher import EventParams, KnownEvents, dispatcher
 from ..icons_cache import IconsCache
-from ..models import SurfaceSpot
-from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint, in_game_timestamp
-from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
+from ..models import StarSystem, SurfaceSpot
+from ..player_location import (
+    DEFAULT_PLANET_RADIUS,
+    PlayerLocation,
+    SurfacePoint,
+    in_game_timestamp,
+)
+from ..predicates import (
+    KNOWN_PREDICATES,
+    InvalidContext,
+    QueryContext,
+    SearchInCurrentSystem,
+)
 from ..presets import PresetManager, load_current_query, save_current_query
 from ..scrollable_area import ScrollableArea
 from ..spot_flags import SurfaceSpotFlags
@@ -59,7 +70,7 @@ class QueryBuilderWindow(tk.Toplevel):
         *,
         db_manager: DatabaseManager,
         preset_manager: PresetManager,
-        current_location: Any | None = None,
+        loc: PlayerLocation | StarSystem | None = None,
         star_resolver: Any | None = None,
     ) -> None:
         super().__init__(parent)
@@ -68,14 +79,37 @@ class QueryBuilderWindow(tk.Toplevel):
 
         self.db_manager = db_manager
         self.preset_manager = preset_manager
-        self.current_location = current_location
+        # The host always has *something* while the game runs: a
+        # ``PlayerLocation`` on a body, or just a ``StarSystem`` in space (no
+        # body). When the game is not running it is ``None``. Normalize all
+        # three into the same two attributes so the rest of the builder only
+        # ever deals with ``current_location`` (surface position, None in
+        # space) and ``current_system`` (the current star, or None). This is
+        # what fixes the "In Current System" predicate: a bare system in space
+        # still scopes the search instead of degrading to ``1 = 1``.
+        self.current_location: PlayerLocation | None
+        self.current_system: StarSystem | None
+        if isinstance(loc, PlayerLocation):
+            self.current_location = loc
+            self.current_system = loc.star_system
+        elif loc is not None:
+            self.current_location = None
+            self.current_system = loc
+        else:
+            self.current_location = None
+            self.current_system = None
         self._star_resolver = star_resolver
         self.data = DataContext(
-            db_manager,
-            current_location.star_system.star_name
-            if current_location is not None and current_location.star_system
-            else None,
+            db_manager, self.current_system.star_name if self.current_system else None
         )
+
+        # Keep "where the player is" fresh while the window is open. We do not
+        # rely on the constructor snapshot alone: the player keeps moving and a
+        # stale ``current_location`` would make ``In Current System`` match the
+        # whole DB. The event carries ``system`` (always with ``.star_name``,
+        # even in space where ``location`` is None), so it is the source of
+        # truth once subscribed.
+        dispatcher.subscribe(KnownEvents.POSITION_UPDATED, self._on_position_updated)
 
         self._lines: list[LineWidget] = []
         self._active_line: LineWidget | None = None
@@ -464,24 +498,69 @@ class QueryBuilderWindow(tk.Toplevel):
     def _build_ctx(self) -> QueryContext:
         coord: SurfacePoint | None = None
         radius = DEFAULT_PLANET_RADIUS
+        # ``current_system`` is the source of truth for the name (and, when
+        # known, the star coords). It is present even in space, so both the
+        # name and the coords come from it; the DB resolves the name to
+        # coordinates itself, these coords just let "near current star"
+        # searches run without an extra lookup.
+        current_name = self.current_system.star_name if self.current_system else None
         current_coords: tuple[float, float, float] | None = None
-        current_name = self.data.current_system_name
+        if self.current_system is not None:
+            x = self.current_system.x
+            y = self.current_system.y
+            z = self.current_system.z
+            if x is not None and y is not None and z is not None:
+                current_coords = (x, y, z)
+        # The surface position only exists on a body; in space it is None, so
+        # surface-distance predicates fail validation instead of searching a
+        # phantom planet.
         if self.current_location is not None:
             pc = self.current_location.player_coord
             if pc is not None:
                 coord = SurfacePoint(pc.latitude, pc.longitude)
             radius = self.current_location.radius_meters or DEFAULT_PLANET_RADIUS
-            star = self.current_location.star_system
-            if star is not None and None not in (star.x, star.y, star.z):
-                current_coords = (star.x, star.y, star.z)
-                if current_name is None:
-                    current_name = star.star_name
         return QueryContext(
             player_coord=coord,
             planet_radius=radius,
             current_system_coords=current_coords,
             current_system_name=current_name,
         )
+
+    def _on_position_updated(self, data: EventParams) -> None:
+        """Refresh the builder's view of where the player is.
+
+        Follows the same normalization as the constructor: ``current_location``
+        is a ``PlayerLocation`` on a body (None in space) and ``current_system``
+        is the current star (always present while the game runs). When both are
+        available ``location`` wins for ``system`` -- they are the same object,
+        but the ordering is deterministic. Only re-renders the ``In Current
+        System`` widget when the name actually changes, so a high-frequency
+        position stream does not thrash the UI.
+        """
+        if isinstance(data.location, PlayerLocation):
+            self.current_location = data.location
+            self.current_system = data.location.star_system
+        else:
+            # In space: ``location`` is None, but ``data.system`` still names
+            # the star. Treat it as a bare system so the "In Current System"
+            # predicate keeps scoping instead of degrading to ``1 = 1``.
+            self.current_location = None
+            self.current_system = data.system
+        new_name = self.current_system.star_name if self.current_system else None
+        if new_name != self.data.current_system_name:
+            self.data.current_system_name = new_name
+            self._refresh_current_system_widgets()
+
+    def _refresh_current_system_widgets(self) -> None:
+        """Re-render any ``In Current System`` widget after a system change.
+
+        The widget reads the system name from ``DataContext`` at render time, so
+        a plain data update is not enough -- the label has to be rebuilt.
+        """
+        for line in self._lines:
+            for widget in line.iter_widgets():
+                if isinstance(widget.get_predicate(), SearchInCurrentSystem):
+                    widget.load_leaf(widget.get_predicate())
 
     def _run(self) -> None:
         predicate = build(self._current_state())
@@ -698,6 +777,9 @@ class QueryBuilderWindow(tk.Toplevel):
         """Window is closed."""
         self._is_closing = True
         save_current_query(build(self._current_state()))
+        # Drop the live position subscription so the dispatcher stops holding a
+        # reference to this (about-to-be-destroyed) window's callback.
+        dispatcher.unsubscribe(KnownEvents.POSITION_UPDATED, self._on_position_updated)
         # Act consistent as user pressed "Clear" UI button.
         self._reset_builder()
         self.destroy()

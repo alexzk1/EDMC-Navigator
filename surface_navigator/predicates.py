@@ -127,7 +127,6 @@ class Predicate:
         unknown current star fails fast with a clear message instead of
         silently rendering the match-all ``1 = 1`` fragment.
         """
-        return None
 
     def make_widget(self, parent: Any, *, data: Any) -> Any:
         raise NotImplementedError
@@ -384,6 +383,10 @@ class MineralIs(Predicate):
             [self.to_find, f"%{self.to_find}%"],
         )
 
+    def validate_context(self, ctx: QueryContext) -> None:
+        if not self.to_find:
+            raise InvalidContext("Enter a surface mineral before searching.")
+
 
 class HasFlag(Predicate):
     """Base for flag-based predicates.
@@ -478,6 +481,10 @@ class OnBody(Predicate):
             frags.append("surface_spots.body_name = ?")
             params.append(self.body_name)
         return " AND ".join(frags), params
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if not self.body_name:
+            raise InvalidContext("Enter a body before searching.")
 
 
 # ---- System predicate (distance in space) ----------------------------------
@@ -601,6 +608,10 @@ class WithinLightYearsOfStar(Predicate):
 
         return StarDistanceInputWidget(self, parent, data)
 
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.distance_ly is None or self.star_name is None:
+            raise InvalidContext("Enter a radius and a star before searching.")
+
     def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
         if self.distance_ly is None or self.star_name is None:
             return "1 = 1", []
@@ -655,6 +666,10 @@ class SearchInExactSystem(Predicate):
             return "1 = 1", []
         return "star_systems.star_name = ?", [self.system_name]
 
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.system_name is None:
+            raise InvalidContext("Enter a system name before searching.")
+
     def referenced_stars(self) -> set[str]:
         # Names the system so the engine resolves it up front: if it is not in
         # the local DB the resolver fetches it online (coordinates, tritium
@@ -694,6 +709,13 @@ class SearchInCurrentSystem(Predicate):
         if ctx.current_system_name is None:
             return "1 = 1", []
         return "star_systems.star_name = ?", [ctx.current_system_name]
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if ctx.current_system_name is None:
+            raise InvalidContext(
+                "Searching your current system needs the current system -- "
+                "start Elite (or load a location) first."
+            )
 
     def make_widget(self, parent: Any, *, data: Any):
         from .query_builder.widgets.current_system import CurrentSystemInfoWidget

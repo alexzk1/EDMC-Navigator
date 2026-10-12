@@ -401,10 +401,14 @@ class MainGUIWidget(ttk.Frame):
         from .star_resolver import StarDataResolver
 
         parent: Any = self.winfo_toplevel()
+        # Pass a PlayerLocation on a body, or just the system in space (both is
+        # what the builder's ``loc`` param expects). When the game is not
+        # running this is None, and the builder copes (see its constructor).
+        loc = self.current_location or self.current_system
         self._query_builder = QueryBuilderWindow(
             parent,
             db_manager=self.db_manager,
             preset_manager=self.preset_manager,
-            current_location=self.current_location,
+            loc=loc,
             star_resolver=StarDataResolver(self.db_manager),
         )

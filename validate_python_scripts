@@ -5,12 +5,10 @@ python3 -m py_compile $1/*.py
 pyflakes $1/*.py
 }
 
-set +e
+set -e
 check surface_navigator
 check surface_navigator/query_builder
 check surface_navigator/query_builder/widgets
 check tests/
-
-set -e
 
 python3 -m pytest tests/

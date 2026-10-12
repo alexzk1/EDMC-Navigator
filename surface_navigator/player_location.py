@@ -35,7 +35,7 @@ def in_game_timestamp(
     game does, and never raises ``ValueError``.
     """
     if now is None:
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017
     real_year = f"{now.year:04d}"
     in_game_year = f"{now.year + IN_GAME_YEAR_OFFSET:04d}"
     return now.strftime(fmt).replace(real_year, in_game_year, 1)

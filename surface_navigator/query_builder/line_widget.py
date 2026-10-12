@@ -12,7 +12,7 @@ The line owns the round-trip for its own level: :meth:`build` produces a
 from __future__ import annotations
 
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from tkinter import ttk
 
 from ..predicates import KNOWN_PREDICATES, And, Not, Predicate
@@ -193,6 +193,11 @@ class LineWidget(ttk.Frame):
         return self._on_remove(self)
 
     # -- round-trip -------------------------------------------------------
+    def iter_widgets(self) -> Iterator[PredicateEditor]:
+        """Yield the live editors in order (used by the host to refresh them)."""
+        for _container, widget in self._widgets:
+            yield widget
+
     def build(self) -> LineNode:
         widgets = [
             WidgetNode(predicate=w.get_predicate(), not_=w.is_not())
