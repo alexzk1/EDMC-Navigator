@@ -114,3 +114,18 @@ class NavigationUtils:
         if dist < 1000:
             return f"{dist:.0f} m"
         return f"{dist / 1000:.2f} km"
+
+    @staticmethod
+    def clean_body_name(system_name: str, raw_body_name: str) -> str:
+        """Strips the parent system name from a body/ring name.
+
+        Spansh's dump prefixes every body and ring with its parent system
+        ("Blaa Eork OH-U d3-1 4 A Ring"), while in-game SAASignalsFound names do
+        not ("4 A Ring"). Stripping keeps the stored ring name consistent with
+        the rest of the app. When the raw name does not actually start with the
+        system name it is returned untouched.
+        """
+        prefix = system_name + " "
+        if raw_body_name.startswith(prefix):
+            return raw_body_name[len(prefix) :]
+        return raw_body_name

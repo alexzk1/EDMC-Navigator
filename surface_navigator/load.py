@@ -14,7 +14,12 @@ try:
     from .models import RingScanStatus, StarSystem, SurfaceSpot
     from .nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from .overlay_client import OverlayClient
-    from .player_location import PlayerLocation, SurfacePoint, in_game_timestamp
+    from .player_location import (
+        NavigationUtils,
+        PlayerLocation,
+        SurfacePoint,
+        in_game_timestamp,
+    )
     from .presets import PresetManager
     from .rhino_db_updater import RhinoMiningDbUpdater
     from .spot_flags import SurfaceSpotFlags
@@ -36,7 +41,12 @@ except ImportError:
     from models import RingScanStatus, StarSystem, SurfaceSpot
     from nav_config import GC_MAX_AGE_SECS, OverlayTextConf
     from overlay_client import OverlayClient
-    from player_location import PlayerLocation, SurfacePoint, in_game_timestamp
+    from player_location import (
+        NavigationUtils,
+        PlayerLocation,
+        SurfacePoint,
+        in_game_timestamp,
+    )
     from presets import PresetManager
     from rhino_db_updater import RhinoMiningDbUpdater
     from spot_flags import SurfaceSpotFlags
@@ -328,12 +338,9 @@ class SurfaceNavigatorPlugin:
         return had_changes
 
     def _clean_body_name(self, system_name: str, raw_body_name: str) -> str:
-        """Removes star system prefix from body name."""
-        if raw_body_name.startswith(system_name + " "):
-            body_name = raw_body_name[len(system_name + " ") :]
-        else:
-            body_name = raw_body_name
-        return body_name
+        """Removes star system prefix from body name (delegates to the shared
+        navigation utility)."""
+        return NavigationUtils.clean_body_name(system_name, raw_body_name)
 
     def _handle_ring_scan(self, entry: Mapping[str, Any]) -> None:
         """Registers rings that contain Tritium (He3 fuel) from SAASignalsFound.

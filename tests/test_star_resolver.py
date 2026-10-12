@@ -12,6 +12,7 @@ One test (``test_get_json_parses_remote_body``) spins up a local
 import http.server
 import json
 import threading
+from unittest.mock import patch
 from typing import Any
 
 from surface_navigator.database import DatabaseManager
@@ -59,25 +60,32 @@ def _system_response(
 
 
 def _dump_with_tritium() -> dict[str, Any]:
-    """Two icy rings: one carries a Tritium signal, the other does not."""
+    """Two icy rings: one carries a Tritium signal, the other does not.
+
+    Mirrors the real Spansh dump: everything is nested under a top-level
+    ``system`` object (``{"system": {"bodies": [...]}}``), and ring names carry
+    the parent system as a prefix.
+    """
     return {
-        "bodies": [
-            {
-                "name": "Kepler-442 b",
-                "rings": [
-                    {
-                        "name": "Kepler-442 b A Ring",
-                        "type": "Icy",
-                        "signals": {"signals": {"Palladium": 1, "Tritium": 3}},
-                    },
-                    {
-                        "name": "Kepler-442 b B Ring",
-                        "type": "Icy",
-                        "signals": {"signals": {"Iridium": 2}},
-                    },
-                ],
-            }
-        ]
+        "system": {
+            "bodies": [
+                {
+                    "name": "Kepler-442 b",
+                    "rings": [
+                        {
+                            "name": "Kepler-442 b A Ring",
+                            "type": "Icy",
+                            "signals": {"signals": {"Palladium": 1, "Tritium": 3}},
+                        },
+                        {
+                            "name": "Kepler-442 b B Ring",
+                            "type": "Icy",
+                            "signals": {"signals": {"Iridium": 2}},
+                        },
+                    ],
+                }
+            ]
+        }
     }
 
 
@@ -127,9 +135,55 @@ def test_resolver_records_only_tritium_rings(db: DatabaseManager):
     )
     resolver("Kepler-442")
 
-    assert _has_tritium_ring_spot(db, "Kepler-442 b A Ring")
-    assert not _has_tritium_ring_spot(db, "Kepler-442 b B Ring")
+    # The Spansh dump prefixes ring names with the system ("Kepler-442 b A
+    # Ring"); the resolver strips that prefix, so the stored name is just
+    # "b A Ring".
+    assert _has_tritium_ring_spot(db, "b A Ring")
+    assert not _has_tritium_ring_spot(db, "b B Ring")
     assert _count_tritium_rings(db, "Kepler-442") == 1
+
+
+def test_resolver_reads_bodies_under_system(db: DatabaseManager):
+    """Regression: the Spansh dump nests bodies under ``system``, not at the
+    top level. A resolver that reads ``dump["bodies"]`` silently records zero
+    rings for every system.
+
+    Also checks the ring-name prefix is stripped: the dump carries
+    "Kepler-442 b A Ring" but the stored name is just "b A Ring".
+    """
+    resolver = StarDataResolver(
+        db, client=FakeClient(system=_system_response(), dump=_dump_with_tritium())
+    )
+    resolver("Kepler-442")
+
+    assert _count_tritium_rings(db, "Kepler-442") == 1
+    assert _has_tritium_ring_spot(db, "b A Ring")
+
+
+def test_resolver_reads_bodies_at_top_level_fallback(db: DatabaseManager):
+    """Older Spansh mirrors put ``bodies`` at the top level; the resolver must
+    still find them (fall back to ``dump["bodies"]``)."""
+    legacy_dump = {
+        "bodies": [
+            {
+                "name": "Kepler-442 b",
+                "rings": [
+                    {
+                        "name": "Kepler-442 b A Ring",
+                        "type": "Icy",
+                        "signals": {"signals": {"Tritium": 1}},
+                    }
+                ],
+            }
+        ]
+    }
+    resolver = StarDataResolver(
+        db, client=FakeClient(system=_system_response(), dump=legacy_dump)
+    )
+    resolver("Kepler-442")
+
+    assert _count_tritium_rings(db, "Kepler-442") == 1
+    assert _has_tritium_ring_spot(db, "b A Ring")
 
 
 def test_resolver_no_id64_is_a_no_op(db: DatabaseManager):
@@ -170,6 +224,30 @@ def test_resolver_is_idempotent(db: DatabaseManager):
     assert _count_tritium_rings(db, "Kepler-442") == 1
     assert client.system_calls == 2
     assert client.dump_calls == 2
+
+
+# ---- edsm_system_url (results-table "Visit on EDSM") -----------------------
+
+
+def test_edsm_system_url_builds_url_from_edsm_id() -> None:
+    """The link uses EDSM's *internal* ``id`` (not the world key ``id64``)."""
+    with patch.object(StarApiClient, "fetch_system", return_value={"id": 12345}):
+        url = StarApiClient().edsm_system_url("Sol", timeout=1)
+    assert url == "https://www.edsm.net/en/system/id/12345/name/Sol"
+
+
+def test_edsm_system_url_percent_encodes_system_name() -> None:
+    """Spaces and punctuation in the system name are percent-encoded."""
+    with patch.object(StarApiClient, "fetch_system", return_value={"id": 7}):
+        url = StarApiClient().edsm_system_url("LHS 1434 (G 108-71)", timeout=1)
+    assert url == "https://www.edsm.net/en/system/id/7/name/LHS%201434%20%28G%20108-71%29"
+
+
+def test_edsm_system_url_returns_none_when_system_unknown() -> None:
+    """Without an ``id`` EDSM knows nothing -- no link to build."""
+    with patch.object(StarApiClient, "fetch_system", return_value={}):
+        url = StarApiClient().edsm_system_url("Nowhere", timeout=1)
+    assert url is None
 
 
 # ---- raw HTTP parsing (local mock server) ----------------------------------

@@ -16,7 +16,10 @@ builder -- so the builder stays a pure selection surface.
 
 from __future__ import annotations
 
+import logging
+import threading
 import tkinter as tk
+import webbrowser
 from tkinter import font as _tk_font
 from tkinter import messagebox, ttk
 from typing import Any
@@ -24,6 +27,7 @@ from typing import Any
 from ..database import DatabaseManager, StarNotFoundError
 from ..icons_cache import IconsCache
 from ..models import SurfaceSpot
+from ..star_resolver import StarApiClient
 from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint
 from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
@@ -36,6 +40,8 @@ from .render import BuilderState, build
 # Seconds of age for the "clear temporaries older than an hour" action.
 _GC_LAST_HOUR_SECS = 3600
 _LEFT_LEFT_PAD_PX = 5
+
+logger = logging.getLogger("SurfaceNavigator")
 
 
 class QueryBuilderWindow(tk.Toplevel):
@@ -246,6 +252,10 @@ class QueryBuilderWindow(tk.Toplevel):
         self._result_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self._result_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, anchor=tk.SW)
+        # Right-click on a result row opens a small action menu (see
+        # ``_on_context_menu``). Bound here rather than in ``__init__`` so the
+        # widget definitely exists.
+        self._result_tree.bind("<Button-3>", self._on_context_menu)
 
     def _build_status(self, parent: tk.Widget) -> None:
         status = ttk.Frame(parent)
@@ -277,6 +287,11 @@ class QueryBuilderWindow(tk.Toplevel):
         self._clean_results()
         self._lines.remove(line)
         line.destroy()
+        # The list shrank: the new first line must stop showing the marker.
+        # Harmless no-op when a non-first line was removed (the first line was
+        # already blank); essential when the first line itself was removed.
+        if self._lines:
+            self._lines[0].set_or_separator("")
         if self._active_line is line:
             self._active_line = self._lines[0] if self._lines else None
         if not self._lines:
@@ -294,6 +309,9 @@ class QueryBuilderWindow(tk.Toplevel):
             on_remove=self._remove_line_callback,
         )
         self._lines.append(line)
+        # Any line but the first ORs with the ones above it, so show the marker.
+        if len(self._lines) > 1:
+            line.set_or_separator("— OR —")
         line.pack(fill=tk.X)
         self._active_line = line
 
@@ -393,11 +411,92 @@ class QueryBuilderWindow(tk.Toplevel):
             )
         self._status.config(text=f"{len(spots)} result(s)")
 
+    # -- results context menu ---------------------------------------------
+    def _on_context_menu(self, event: Any) -> None:
+        """Show the results-table context menu at the cursor.
+
+        The menu acts on the row under the cursor: **Copy System** puts the
+        system name on the clipboard, **Visit on EDSM** fetches the EDSM page
+        (one ``/api-v1/system`` call for the system ``id``) and opens it in the
+        default browser, and **Cancel** just dismisses the menu. A right-click
+        outside a row (or on a row with no system) does nothing.
+        """
+        item = self._result_tree.identify_row(event.y)
+        if item is None:
+            return
+        values = self._result_tree.item(item, "values")
+        if not values:
+            return
+        system = values[0]  # "system" is the first column.
+        if not system or system in ("", "—"):
+            return
+        menu = self._build_context_menu(system)
+        # ``tk_popup`` takes *absolute* screen coords (``x_root``/``y_root``), so
+        # the menu lands exactly under the cursor regardless of where the tree
+        # sits inside the window. ``grab_release`` undoes the grab ``tk_popup``
+        # takes, so the window becomes clickable again after the menu closes.
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _build_context_menu(self, system: str) -> tk.Menu:
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Copy System", command=lambda: self._copy_system(system))
+        menu.add_command(label="Visit on EDSM", command=lambda: self._visit_edsm(system))
+        menu.add_separator()
+        menu.add_command(label="Cancel", command=menu.destroy)
+        return menu
+
+    def _copy_system(self, system: str) -> None:
+        """Copy a system name to the clipboard."""
+        self.clipboard_clear()
+        self.clipboard_append(system)
+        self.update_idletasks()
+
+    def _visit_edsm(self, system: str) -> None:
+        """Open the system on EDSM in the default browser.
+
+        The EDSM ``id`` is fetched over the network, so this runs in a worker
+        thread; the browser launch (an external call, never a tkinter call) is
+        still marshalled back to the main thread via ``after``.
+        """
+
+        def worker() -> None:
+            try:
+                url = StarApiClient().edsm_system_url(system)
+            except Exception:  # noqa: BLE001 - surface any unexpected failure
+                logger.exception("Failed to build EDSM URL for %r", system)
+                self.after(0, lambda: self._show_edsm_warning(system, "open"))
+                return
+            if url is None:
+                self.after(0, lambda: self._show_edsm_warning(system, "unknown"))
+                return
+            self.after(0, lambda: webbrowser.open(url))
+
+        threading.Thread(target=worker, name="edsm-url", daemon=True).start()
+
+    def _show_edsm_warning(self, system: str, reason: str) -> None:
+        if reason == "unknown":
+            message = (
+                f"EDSM knows nothing about '{system}' -- there is no page to open."
+            )
+        else:
+            message = (
+                f"Couldn't reach EDSM to find '{system}'. "
+                "Check your network connection and try again."
+            )
+        messagebox.showwarning("EDSM", message)
+
     # -- presets ----------------------------------------------------------
     def _reload_presets(self) -> None:
         self._preset_list.delete(0, self._preset_list.size())
+        # Insert in order (``tk.END``), not at index 0 -- ``insert(0, ...)``
+        # reverses the list, which then mismatches the index used by
+        # ``_load_selected_preset`` (that one reads ``preset_manager.load()``
+        # in the correct order). That mismatch is what loaded the wrong query.
         for preset in self.preset_manager.load():
-            self._preset_list.insert(0, preset.name)
+            self._preset_list.insert(tk.END, preset.name)
 
     def _on_preset_selected(self, _event: Any = None) -> None:
         self._load_selected_preset()
@@ -451,7 +550,7 @@ class QueryBuilderWindow(tk.Toplevel):
         if not state.lines:
             self._add_line()
             return
-        for node in state.lines:
+        for i, node in enumerate(state.lines):
             line = LineWidget(
                 self._lines_container,
                 data=self.data,
@@ -459,6 +558,9 @@ class QueryBuilderWindow(tk.Toplevel):
                 on_remove=self._remove_line_callback,
             )
             self._lines.append(line)
+            # Restore the OR markers: blank on the first line, shown after.
+            if i > 0:
+                line.set_or_separator("— OR —")
             line.pack(fill=tk.X)
             line.load(node)
         self._active_line = self._lines[-1]

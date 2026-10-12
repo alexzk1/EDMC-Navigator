@@ -52,6 +52,7 @@ class StarClient(Protocol):
 
 EDSM_SYSTEM_URL = "https://www.edsm.net/api-v1/system"
 EDSM_BODIES_URL = "https://www.edsm.net/api-system-v1/bodies"
+EDSM_SYSTEM_PAGE_URL = "https://www.edsm.net/en/system"
 SPANSH_DUMP_URL = "https://www.spansh.co.uk/api/dump/{id64}"
 
 # Signal key that marks a tritium (He3) ring in the Spansh dump.
@@ -132,6 +133,24 @@ class StarApiClient:
             SPANSH_DUMP_URL.format(id64=system_id64), timeout
         )
 
+    def edsm_system_url(
+        self, system_name: str, timeout: int = STAR_API_TIMEOUT_SEC
+    ) -> str | None:
+        """The EDSM system-page URL for ``system_name``.
+
+        ``https://www.edsm.net/en/system/id/<id>/name/<name>`` -- the ``id`` is
+        EDSM's *internal* id (not the Elite world key ``id64``), fetched via
+        :meth:`fetch_system` -- the same request the resolver already makes, so
+        building a link costs exactly one extra round-trip. Returns ``None``
+        when EDSM knows nothing about the system (no ``id`` in the response).
+        """
+        data = self.fetch_system(system_name, timeout)
+        system_id = data.get("id")
+        if system_id is None:
+            return None
+        encoded = urllib.parse.quote(str(system_name), safe="")
+        return f"{EDSM_SYSTEM_PAGE_URL}/id/{system_id}/name/{encoded}"
+
 
 class StarDataResolver:
     """Concrete :data:`StarResolver` implementation.
@@ -202,21 +221,35 @@ class StarDataResolver:
         resolve is a no-op once the rings are known.
         """
         from .models import RingScanStatus, StarSystem
+        from .player_location import NavigationUtils
 
         dump = self._client.fetch_dump(system_id64, self._timeout)
         if not dump:
             logger.debug("StarDataResolver: empty Spansh dump for %r", system_name)
             return
 
+        # The Spansh dump nests everything under a top-level ``system`` object
+        # (``{"system": {"bodies": [...]}}``). Older mirrors sometimes put
+        # ``bodies`` at the top level, so fall back to that -- but a missing
+        # list must never be read as "the system has no bodies".
+        system_data = dump.get("system") or {}
+        bodies = system_data.get("bodies") or dump.get("bodies") or []
+
         system = StarSystem(star_name=system_name, systemid=system_id64)
-        for body in dump.get("bodies", []) or []:  # type: ignore
+        for body in bodies:  # type: ignore[list-item]
             for ring in body.get("rings", []) or []:  # type: ignore
                 signal = self._find_tritium_signal(ring)  # type: ignore
                 if signal is None:
                     continue
-                ring_name: str = ring.get("name") or ""  # type: ignore
-                if not ring_name:
+                raw_ring_name: str = ring.get("name") or ""  # type: ignore
+                if not raw_ring_name:
                     continue
+                # Spansh prefixes every ring with its parent system
+                # ("Blaa Eork OH-U d3-1 4 A Ring"); in-game SAASignalsFound
+                # names do not, so strip the prefix to keep names consistent.
+                ring_name = NavigationUtils.clean_body_name(
+                    system_name, raw_ring_name
+                )
                 # ``name_from_log`` keeps the exact string from the dump;
                 # ``fuzzy_matched_name`` is the canonical lowercased commodity
                 # name (the DB compares against "tritium").

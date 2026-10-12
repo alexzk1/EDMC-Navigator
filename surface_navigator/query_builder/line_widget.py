@@ -44,6 +44,12 @@ class LineWidget(ttk.Frame):
 
     # -- UI ---------------------------------------------------------------
     def _build_ui(self) -> None:
+        # OR separator: the topmost element of the line, so everything else
+        # (header + widgets) sits under it. The first line keeps an empty
+        # marker here (set by the host) so every line has the same top offset.
+        self._or_label = ttk.Label(self, text="")
+        self._or_label.pack(fill=tk.X)
+
         header = ttk.Frame(self)
         header.pack(fill=tk.X, pady=(2, 2))
 
@@ -71,6 +77,15 @@ class LineWidget(ttk.Frame):
 
         self._refresh_label()
 
+    def set_or_separator(self, text: str) -> None:
+        """Show/hide the ``-- OR --`` marker above this line.
+
+        The host calls this whenever the line list changes: a freshly added
+        line gets the marker (it ORs with the lines above it), while the first
+        line always gets a blank marker so the stack stays aligned.
+        """
+        self._or_label.config(text=text)
+
     def _open_add_menu(self) -> None:
         menu = tk.Menu(self._add_btn, tearoff=0)
         for cls in KNOWN_PREDICATES:
@@ -80,10 +95,24 @@ class LineWidget(ttk.Frame):
                 label=f"NOT {label}",
                 command=lambda c=cls: self._add(c, True),
             )
-        # Post just below the add button.
-        x = self._add_btn.winfo_x()
-        y = self._add_btn.winfo_y() + self._add_btn.winfo_height()
-        menu.post(x, y)
+        # A way to dismiss the menu without picking a predicate. ``lambda: None``
+        # (rather than ``menu.destroy``) lets ``tk_popup`` withdraw the menu
+        # itself, so the ``grab_release`` in ``finally`` stays happy.
+        menu.add_separator()
+        menu.add_command(label="Cancel", command=lambda: None)
+        # ``tk_popup`` takes *absolute* screen coords, so the menu appears
+        # straight under the add button no matter where the line sits in the
+        # window. ``winfo_rootx``/``winfo_rooty`` are the button's position
+        # relative to the screen root; adding the button height drops the menu
+        # just below it. (The old ``winfo_x``/``winfo_y`` were relative to the
+        # button's parent *frame*, which offset the menu sideways.)
+        try:
+            menu.tk_popup(
+                self._add_btn.winfo_rootx(),
+                self._add_btn.winfo_rooty() + self._add_btn.winfo_height(),
+            )
+        finally:
+            menu.grab_release()
 
     # -- adding / removing widgets ----------------------------------------
     def add_widget(self, pred: Predicate, not_: bool) -> None:
