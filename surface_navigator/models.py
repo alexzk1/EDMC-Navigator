@@ -21,7 +21,7 @@ class SurfaceSpot:
     mineral_original: str | None = None  # Original provided value.
     amount: float | None = None
     density: float | None = None
-    max_miners: int = 1
+    max_miners: int = 1  # Rigs count
     last_visit_time: datetime.datetime | None = None
     notes: str | None = None
     # Bit-field of SurfaceSpotFlags. Stored as INTEGER in the DB; defaults to 0

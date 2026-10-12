@@ -32,6 +32,7 @@ from ..player_location import DEFAULT_PLANET_RADIUS, SurfacePoint, in_game_times
 from ..predicates import KNOWN_PREDICATES, InvalidContext, QueryContext
 from ..presets import PresetManager, load_current_query, save_current_query
 from ..scrollable_area import ScrollableArea
+from ..spot_flags import SurfaceSpotFlags
 from ..star_resolver import StarApiClient
 from ..ui_tooltip import Tooltip
 from ..vertical_resize_handler import VerticalResizeHandler
@@ -331,6 +332,7 @@ class QueryBuilderWindow(tk.Toplevel):
             "lon",
             "system",
             "body",
+            "rigs",
         )
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
@@ -352,7 +354,7 @@ class QueryBuilderWindow(tk.Toplevel):
             "lon": 70,
         }
         for col in columns:
-            if col in ("system", "body"):
+            if col in ("system", "body", "rigs"):
                 # Hidden, but kept: the context menu reads these by name.
                 self._result_tree.column(col, width=0, stretch=False)
                 self._result_tree.heading(col, text="")
@@ -515,13 +517,21 @@ class QueryBuilderWindow(tk.Toplevel):
         self._clean_results()
         for spot in spots:
             parts = [p for p in (spot.star_system, spot.body_name) if p]
+            notes = spot.notes or "-"
+            if (
+                spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT
+                or spot.mineral_type is None
+            ):
+                notes_rigs = notes
+            else:
+                notes_rigs = f"{notes} (rigs: {spot.max_miners})"
             self._result_tree.insert(
                 "",
                 tk.END,
                 values=(
                     " ".join(parts) if parts else "—",  # full_name (visible)
                     spot.mineral_type or "—",  # mineral
-                    spot.notes or "",  # note
+                    notes_rigs,  # note
                     self._format_visit_time(spot.last_visit_time),  # visit
                     round(spot.latitude, 4),  # lat
                     round(spot.longitude, 4),  # lon
