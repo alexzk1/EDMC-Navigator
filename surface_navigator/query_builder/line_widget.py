@@ -50,7 +50,7 @@ class LineWidget(ttk.Frame):
         # Line-level NOT toggle (a Checkbutton to distinguish it from the
         # per-widget NOT buttons).
         self._line_not_btn = ttk.Checkbutton(
-            header, text="Neg", variable=self._line_not, command=self._refresh_label
+            header, text="🔁 Neg", variable=self._line_not, command=self._refresh_label
         )
         self._line_not_btn.pack(side=tk.LEFT)
 

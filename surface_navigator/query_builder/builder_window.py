@@ -141,9 +141,9 @@ class QueryBuilderWindow(tk.Toplevel):
         right_header.pack(fill=tk.X)
         self._top_not = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            right_header, text="Neg the whole query.", variable=self._top_not
+            right_header, text="🔁 Neg the whole query.", variable=self._top_not
         ).pack(side=tk.RIGHT)
-        ttk.Button(right_header, text="Run", command=self._run).pack(side=tk.RIGHT)
+        ttk.Button(right_header, text="🔎 Run", command=self._run).pack(side=tk.RIGHT)
         self._add_line_controls(right)
 
         # Lines area
@@ -174,7 +174,7 @@ class QueryBuilderWindow(tk.Toplevel):
         return area.controls_area
 
     def _build_palette(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="Conditions Palette").pack(anchor=tk.W)
+        ttk.Label(parent, text="🔣 Conditions Palette").pack(anchor=tk.W)
         palette = self._create_scrollable_container(parent)
         for cls in KNOWN_PREDICATES:
             label = cls().describe()
@@ -195,21 +195,21 @@ class QueryBuilderWindow(tk.Toplevel):
             ttk.Label(row, text=label, anchor="w").pack(side=tk.LEFT, padx=(2, 0))
 
     def _build_presets(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="User Presets").pack(
+        ttk.Label(parent, text="🗂️ User Presets").pack(
             anchor=tk.W, pady=(10, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
         )
         palette = self._create_scrollable_container(parent)
         self._preset_list = tk.Listbox(palette, height=6)
         self._preset_list.pack(fill=tk.Y, expand=True, padx=(_LEFT_LEFT_PAD_PX, 0))
         self._preset_list.bind("<<ListboxSelected>>", self._on_preset_selected)
-        ttk.Button(palette, text="Load", command=self._load_selected_preset).pack(
+        ttk.Button(palette, text="📂 Load", command=self._load_selected_preset).pack(
             fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
         )
 
-        ttk.Label(palette, text="Save current as:").pack(anchor=tk.W, pady=(10, 0))
+        ttk.Label(palette, text="⌨️ Save current as:").pack(anchor=tk.W, pady=(10, 0))
         self._save_entry = ttk.Entry(palette)
         self._save_entry.pack(fill=tk.X, padx=(_LEFT_LEFT_PAD_PX, 0))
-        ttk.Button(palette, text="Save preset", command=self._save_current).pack(
+        ttk.Button(palette, text="💾 Save preset", command=self._save_current).pack(
             fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0)
         )
         self._reload_presets()
@@ -228,7 +228,9 @@ class QueryBuilderWindow(tk.Toplevel):
         )
 
     def _build_results(self, parent: tk.Widget) -> None:
-        ttk.Label(parent, text="Results").pack(anchor=tk.W, pady=(10, 0), side=tk.TOP)
+        ttk.Label(parent, text="👉 Results").pack(
+            anchor=tk.W, pady=(10, 0), side=tk.TOP
+        )
         columns = ("system", "body", "mineral", "note", "lat", "lon")
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
@@ -251,11 +253,11 @@ class QueryBuilderWindow(tk.Toplevel):
         self._status = ttk.Label(status, text="")
         self._status.pack(side=tk.LEFT)
         ttk.Button(
-            status, text="Clear all temporaries", command=lambda: self._gc(0)
+            status, text="🧹 Clear all temporaries", command=lambda: self._gc(0)
         ).pack(side=tk.RIGHT, padx=(5, 20), pady=5)
         ttk.Button(
             status,
-            text=f"Clear temporaries > {_GC_LAST_HOUR_SECS // 60} min",
+            text=f"🧹 Clear temporaries > {_GC_LAST_HOUR_SECS // 60} min",
             command=lambda: self._gc(_GC_LAST_HOUR_SECS),
         ).pack(side=tk.RIGHT)
 

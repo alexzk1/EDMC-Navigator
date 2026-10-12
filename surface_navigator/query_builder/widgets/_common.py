@@ -30,7 +30,7 @@ class BaseInputWidget(PredicateEditor):
         header = ttk.Frame(self)
         header.pack(fill=tk.X, pady=(0, 4))
         self._not_btn = ttk.Button(
-            header, text="Neg", width=5, command=self._toggle_not
+            header, text="🔁Neg", width=5, command=self._toggle_not
         )
         self._not_btn.pack(side=tk.LEFT)
         self._label = ttk.Label(header, text="")

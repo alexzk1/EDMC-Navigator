@@ -71,7 +71,7 @@ class MainGUIWidget(ttk.Frame):
         main_container.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(
-            main_container, text="Surface Spots", font=("Helvetica", 12, "bold")
+            main_container, text="📍🗺️ Surface Spots", font=("Helvetica", 12, "bold")
         ).pack()
 
         # Toolbar (Horizontal layout for buttons)
@@ -79,15 +79,15 @@ class MainGUIWidget(ttk.Frame):
         toolbar.pack(fill=tk.X, pady=(5, 5))
 
         self._btn_add = ttk.Button(
-            toolbar, text="Record Spot", command=self._open_add_dialog
+            toolbar, text="📝 Record Spot", command=self._open_add_dialog
         )
         self._btn_add.pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(toolbar, text="Navigate To", command=self._on_navigate).pack(
+        ttk.Button(toolbar, text="🧭 Navigate To", command=self._on_navigate).pack(
             side=tk.RIGHT, padx=2
         )
 
-        ttk.Button(toolbar, text="Manage", command=self._open_query_builder).pack(
+        ttk.Button(toolbar, text="💼 Manage", command=self._open_query_builder).pack(
             side=tk.RIGHT, padx=2
         )
 
