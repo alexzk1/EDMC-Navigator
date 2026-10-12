@@ -705,12 +705,24 @@ class DatabaseManager:
             return self._fetch_select_cursor(conn.execute(sql, where_params))
 
     def _lookup_star_coords(self, star_name: str) -> tuple[float, float, float] | None:
-        """Look up a star's (x, y, z) in the local DB, or None if unknown."""
+        """Look up a star's (x, y, z) in the local DB, or None if unknown.
+
+        A row that exists but still holds NULLs (a system we merely know the
+        name of) counts as unknown too: a partial coordinate set is unusable for
+        distance math, and returning ``(None, None, None)`` here would hide that
+        from :meth:`_resolve_referenced_stars` -- it would look "resolved" and
+        never trigger the resolver. So any NULL among the three means "fetch it".
+        """
         with self._get_connection() as conn:
             row = conn.execute(
                 "SELECT x, y, z FROM star_systems WHERE star_name = ?", (star_name,)
             ).fetchone()
-        return tuple(row) if row else None
+        if row is None:
+            return None
+        x, y, z = row
+        if x is None or y is None or z is None:
+            return None
+        return (x, y, z)
 
     def _resolve_referenced_stars(
         self,

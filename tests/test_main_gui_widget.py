@@ -1,6 +1,6 @@
 """Tests for the pure note-rendering helper used by the main table."""
 
-from surface_navigator.main_gui_widget import MainGUIWidget, render_note
+from surface_navigator.main_gui_widget import render_note
 from surface_navigator.models import SurfaceSpot
 from surface_navigator.player_location import NavigationUtils
 from surface_navigator.spot_flags import SurfaceSpotFlags
@@ -22,12 +22,12 @@ def test_render_note_defaults_to_dash():
 def test_render_note_prefixes_clock_for_temporary_mark():
     spot = SurfaceSpot(notes="temp here", flags=SurfaceSpotFlags.IS_TEMPORARY_MARK)
     # 🕐 clock face one o'clock followed by the note.
-    assert render_note(spot) == f"\U0001F550 temp here"
+    assert render_note(spot) == "\U0001F550 temp here"
 
 
 def test_render_note_clock_with_empty_notes():
     spot = SurfaceSpot(notes=None, flags=SurfaceSpotFlags.IS_TEMPORARY_MARK)
-    assert render_note(spot) == f"\U0001F550 -"
+    assert render_note(spot) == "\U0001F550 -"
 
 
 def test_render_note_tritium_ring_marker():

@@ -38,3 +38,12 @@ MESSAGE_ID: str = "navigator_message"
 
 # Distance (meters) under which navigation is considered "reached".
 NAVIGATION_THRESHOLD_METERS: float = 20.0
+
+
+# ---------------------------------------------------------------------------
+# External star data (EDSM + Spansh)
+# ---------------------------------------------------------------------------
+# Per-request timeout (seconds) for the EDSM/Spansh star lookups done by the
+# star resolver. Kept short so an unreachable host fails fast instead of
+# hanging a search.
+STAR_API_TIMEOUT_SEC: int = 20

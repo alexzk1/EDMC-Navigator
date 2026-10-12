@@ -14,7 +14,6 @@ import os
 import pathlib
 import tempfile
 import time
-from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -37,23 +36,6 @@ from surface_navigator.predicates import (
     WithinLightYearsOfStar,
 )
 from surface_navigator.spot_flags import SurfaceSpotFlags
-
-
-@pytest.fixture()
-def db_path() -> Iterator[str]:
-    """A fresh empty DB path in /tmp, removed after the test."""
-    fd, path = tempfile.mkstemp(
-        prefix="edmc_surface_navigator_", suffix=".db", dir="/tmp"
-    )
-    os.close(fd)
-    yield path
-    if os.path.exists(path):
-        os.remove(path)
-
-
-@pytest.fixture()
-def db(db_path: str) -> DatabaseManager:
-    return DatabaseManager(db_path)
 
 
 @pytest.fixture(autouse=True)
@@ -917,6 +899,10 @@ def test_query_spots_search_in_exact_system(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
     db.add_spot(_spot("Beta", "b2", 11.0, 21.0, "iron"))
     db.add_spot(_spot("Beta", "b3", 12.0, 22.0, "silver"))
+    # Beta already has a row (via add_spot) but with NULL coords -- give it a
+    # complete coordinate set so the search has the data it needs and does not
+    # need to trigger the resolver (this test only checks name scoping).
+    db._get_or_create_star(StarSystem(star_name="Beta", x=11.0, y=21.0, z=22.0))
 
     result = db.query_spots(SearchInExactSystem("Beta"), QueryContext())
     assert [sp.star_system for sp in result] == ["Beta", "Beta"]
@@ -927,6 +913,10 @@ def test_query_spots_search_in_exact_system_composes(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
     db.add_spot(_spot("Alpha", "b2", 11.0, 21.0, "silver"))
     db.add_spot(_spot("Beta", "b3", 12.0, 22.0, "iron"))
+    # Alpha has a row but with NULL coords -- complete it so the search has
+    # coordinates and does not trigger the resolver (this test checks AND
+    # composition, not resolution).
+    db._get_or_create_star(StarSystem(star_name="Alpha", x=10.0, y=20.0, z=20.0))
 
     result = db.query_spots(
         And(SearchInExactSystem("Alpha"), MineralIs("silver")),
@@ -955,6 +945,35 @@ def test_query_spots_search_in_exact_system_triggers_resolver(db: DatabaseManage
         SearchInExactSystem("Kepler-442"), QueryContext(), star_resolver=resolver
     )
     assert [sp.star_system for sp in result] == ["Kepler-442"]
+
+
+def test_query_spots_light_year_search_backfills_null_coorded_star(
+    db: DatabaseManager,
+):
+    """A distance search needs the centre star's coordinates.
+
+    When the star already has a row but with NULL coords (a system we merely
+    know the name of), the resolver must be triggered to backfill them -- and
+    the search must then succeed. This is the regression path: ``_lookup_star_coords``
+    used to return ``(None, None, None)`` for such a row, which looked "resolved"
+    and never triggered the resolver.
+    """
+
+    # "Proxima" exists via add_spot, but its row has NULL coords.
+    db.add_spot(_spot("Proxima", "b1", 0.0, 0.0, "iron"))
+
+    def resolver(name: str):
+        if name == "Proxima":
+            db._get_or_create_star(  # type: ignore
+                StarSystem(star_name=name, x=0.0, y=0.0, z=0.0)
+            )
+
+    result = db.query_spots(
+        WithinLightYearsOfStar(50.0, "Proxima"),
+        QueryContext(),
+        star_resolver=resolver,
+    )
+    assert [sp.star_system for sp in result] == ["Proxima"]
 
 
 def test_query_spots_search_in_current_system(db: DatabaseManager):

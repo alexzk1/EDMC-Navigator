@@ -11,7 +11,7 @@ suppressed.
 
 import pytest
 
-from surface_navigator.events_dispatcher import EventParams, KnownEvents, dispatcher
+from surface_navigator.events_dispatcher import EventParams
 from surface_navigator.events_suppression_zone import (
     SURFACE_SCAN_SUPPRESSION_RADIUS_METERS,
     SUPPRESSION_RADIUS_METERS,

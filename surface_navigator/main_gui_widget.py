@@ -372,6 +372,7 @@ class MainGUIWidget(ttk.Frame):
             return
 
         from .query_builder.builder_window import QueryBuilderWindow
+        from .star_resolver import StarDataResolver
 
         parent: Any = self.winfo_toplevel()
         self._query_builder = QueryBuilderWindow(
@@ -379,4 +380,5 @@ class MainGUIWidget(ttk.Frame):
             db_manager=self.db_manager,
             preset_manager=self.preset_manager,
             current_location=self.current_location,
+            star_resolver=StarDataResolver(self.db_manager),
         )
