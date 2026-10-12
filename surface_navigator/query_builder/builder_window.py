@@ -698,6 +698,10 @@ class QueryBuilderWindow(tk.Toplevel):
 
         state: BuilderState = load_state(predicate)
         for line in self._lines:
+            # Clean up internal state (widgets + tooltips) before destroying;
+            # ``remove`` would do this but also notifies the host, which the
+            # reload does not want.
+            line.destroy_internal()
             line.destroy()
         self._lines.clear()
         self._top_not.set(state.top_not)

@@ -82,6 +82,15 @@ class PredicateEditor(ttk.Frame):
         self._not.set(value)
         self._refresh_label()
 
+    def get_not_button(self) -> tk.Widget | None:
+        """Return the NOT toggle button, or ``None`` if this editor has none.
+
+        The line attaches a hover tooltip to it (see
+        :mod:`query_builder.line_widget`). Base editors have no toggle;
+        ``BaseInputWidget`` exposes its ``_not_btn``.
+        """
+        return None
+
     def _refresh_label(self) -> None:
         pass
 

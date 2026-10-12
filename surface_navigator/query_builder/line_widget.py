@@ -16,6 +16,7 @@ from collections.abc import Callable
 from tkinter import ttk
 
 from ..predicates import KNOWN_PREDICATES, And, Not, Predicate
+from ..ui_tooltip import Tooltip
 from .base import DataContext, PredicateEditor
 from .render import LineNode, WidgetNode
 
@@ -37,6 +38,11 @@ class LineWidget(ttk.Frame):
         self._line_not = tk.BooleanVar(value=False)
         self._on_activate = on_activate
         self._on_remove = on_remove
+        # Hover tooltips. ``_tooltips`` holds the line-level ones (detached when
+        # the line is removed); ``_widget_tooltips`` maps a widget to its own
+        # NOT-toggle tooltip so ``remove_widget`` can detach just that one.
+        self._tooltips: list[Tooltip] = []
+        self._widget_tooltips: dict[PredicateEditor, Tooltip] = {}
 
         self._build_ui()
         # A freshly created line is the natural target for the palette.
@@ -63,8 +69,8 @@ class LineWidget(ttk.Frame):
         self._label = ttk.Label(header, text="")
         self._label.pack(side=tk.LEFT, padx=(6, 6))
 
-        remove_btn = ttk.Button(header, text="✕", width=3, command=self.remove)
-        remove_btn.pack(side=tk.RIGHT)
+        self._remove_btn = ttk.Button(header, text="✕", width=3, command=self.remove)
+        self._remove_btn.pack(side=tk.RIGHT)
 
         # The widgets are packed here, left to right.
         self._widgets_row = ttk.Frame(self)
@@ -76,6 +82,16 @@ class LineWidget(ttk.Frame):
         self._add_btn.pack(side=tk.RIGHT, pady=2)
 
         self._refresh_label()
+        # Line-level tooltips. These controls live for the line's whole life,
+        # so they are torn down together with the line in ``remove``.
+        self._add_tooltip(
+            self._line_not_btn, "Negate this whole line -- inverts the whole AND-group."
+        )
+        self._add_tooltip(self._remove_btn, "Remove this whole line from the query.")
+        self._add_tooltip(
+            self._add_btn,
+            "Add a condition to this line via AND. Press to see the list.",
+        )
 
     def set_or_separator(self, text: str) -> None:
         """Show/hide the ``-- OR --`` marker above this line.
@@ -128,6 +144,13 @@ class LineWidget(ttk.Frame):
         if not_:
             widget.set_not(True)
         self._widgets.append((container, widget))
+        # The NOT toggle lives in the container (destroyed on removal), so the
+        # tooltip is tracked per-widget and detached in ``remove_widget``.
+        not_btn = widget.get_not_button()
+        if not_btn is not None:
+            self._widget_tooltips[widget] = Tooltip(
+                not_btn, "Toggle the negation of this condition."
+            )
         self._refresh_label()
         self._on_activate(self)
 
@@ -135,14 +158,38 @@ class LineWidget(ttk.Frame):
         for container, other in self._widgets:
             if other is widget:
                 self._widgets.remove((container, widget))
+                # Detach before the container (and its NOT button) is gone.
+                tip = self._widget_tooltips.pop(widget, None)
+                if tip is not None:
+                    tip.detach()
                 container.destroy()
                 self._refresh_label()
                 break
 
-    def remove(self) -> bool:
+    def destroy_internal(self) -> None:
+        """Detach tooltips and tear down internal widgets without notifying the host.
+
+        Every removal path must run this so internal state (``_widgets``,
+        ``_tooltips``, ``_widget_tooltips``) never leaks and orphaned tip
+        windows can't outlive their widgets. ``remove`` calls it before
+        notifying the host; the builder's reload path calls it directly before
+        destroying the frame.
+        """
+        # Detach per-widget tooltips first: their buttons live inside the
+        # containers we are about to destroy.
+        for tip in self._widget_tooltips.values():
+            tip.detach()
+        self._widget_tooltips.clear()
         for container, _ in self._widgets:
             container.destroy()
         self._widgets.clear()
+        # Then the line-level tooltips (line NOT, remove, add).
+        for tip in self._tooltips:
+            tip.detach()
+        self._tooltips.clear()
+
+    def remove(self) -> bool:
+        self.destroy_internal()
         return self._on_remove(self)
 
     # -- round-trip -------------------------------------------------------
@@ -162,6 +209,11 @@ class LineWidget(ttk.Frame):
     # -- helpers ----------------------------------------------------------
     def _add(self, cls: type[Predicate], not_: bool) -> None:
         self.add_widget(cls(), not_)
+
+    def _add_tooltip(self, widget: tk.Widget, text: str) -> None:
+        """Attach a static hover tooltip and remember it for cleanup."""
+        tip = Tooltip(widget, text)
+        self._tooltips.append(tip)
 
     def _refresh_label(self) -> None:
         node = self.build()

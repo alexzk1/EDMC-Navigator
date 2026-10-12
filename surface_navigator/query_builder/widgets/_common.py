@@ -36,6 +36,9 @@ class BaseInputWidget(PredicateEditor):
         self._label = ttk.Label(header, text="")
         self._label.pack(side=tk.LEFT, padx=(4, 0))
 
+    def get_not_button(self) -> tk.Widget | None:
+        return self._not_btn
+
     def _toggle_not(self) -> None:
         self.set_not(not self._not.get())
 
