@@ -408,6 +408,7 @@ class QueryBuilderWindow(tk.Toplevel):
             "body",
             "rigs",
             "spot_number",
+            "flags",
         )
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
@@ -429,7 +430,7 @@ class QueryBuilderWindow(tk.Toplevel):
             "lon": 70,
         }
         for col in columns:
-            if col in ("system", "body", "rigs", "spot_number"):
+            if col in ("system", "body", "rigs", "spot_number", "flags"):
                 # Hidden, but kept: the context menu reads these by name.
                 self._result_tree.column(col, width=0, stretch=False)
                 self._result_tree.heading(col, text="")
@@ -662,6 +663,9 @@ class QueryBuilderWindow(tk.Toplevel):
                     round(spot.longitude, 4),  # lon
                     spot.star_system or "",  # system (hidden)
                     spot.body_name or "",  # body (hidden)
+                    spot.max_miners,  # rigs (hidden)
+                    spot.spot_number or "",  # spot_number (hidden)
+                    spot.flags.value,  # flags (hidden)
                 ),
             )
         self._status.config(text=f"{len(spots)} result(s)")
@@ -675,6 +679,26 @@ class QueryBuilderWindow(tk.Toplevel):
         if dt is None:
             return "—"
         return in_game_timestamp(now=dt)
+
+    @staticmethod
+    def _navigable_target(
+        flags: int,
+        system: str,
+        body: str,
+        lat: str,
+        lon: str,
+        navigate: Callable[[PlayerLocation], None] | None,
+    ) -> PlayerLocation | None:
+        """Navigation target for a results row, or ``None`` if we can't navigate.
+
+        A Tritium Ring is a spot in space, not a surface point -- no surface
+        navigation target for it. Otherwise defer to :func:`navigation_target`,
+        which already rejects rows missing any of the four fields.
+        """
+        spot_flags = SurfaceSpotFlags(flags)
+        if navigate is None or spot_flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT:
+            return None
+        return navigation_target(system, body, lat, lon)
 
     # -- results context menu ---------------------------------------------
     def _on_context_menu(self, event: Any) -> None:
@@ -703,15 +727,13 @@ class QueryBuilderWindow(tk.Toplevel):
             self._result_tree.set(item, "lat"),
             self._result_tree.set(item, "lon"),
         )
-        target = (
-            navigation_target(
-                self._result_tree.set(item, "system"),
-                self._result_tree.set(item, "body"),
-                self._result_tree.set(item, "lat"),
-                self._result_tree.set(item, "lon"),
-            )
-            if self._navigate is not None
-            else None
+        target = self._navigable_target(
+            int(self._result_tree.set(item, "flags")),
+            self._result_tree.set(item, "system"),
+            self._result_tree.set(item, "body"),
+            self._result_tree.set(item, "lat"),
+            self._result_tree.set(item, "lon"),
+            self._navigate,
         )
         menu = self._build_context_menu(full_name, location, system, target=target)
         # ``tk_popup`` takes *absolute* screen coords (``x_root``/``y_root``), so
