@@ -601,12 +601,14 @@ class QueryBuilderWindow(tk.Toplevel):
             extra_segments: list[str] = []
             if not (spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT):
                 if spot.spot_number is not None:
-                    extra_segments.append(f"spot id: {spot.spot_number}")
+                    extra_segments.append(f"nav_id: {spot.spot_number}")
                 if spot.mineral_type is not None:
                     extra_segments.append(f"rigs: {spot.max_miners}")
 
+            display_notes = notes
             if extra_segments:
-                notes = f"{notes} ({', '.join(extra_segments)})"
+                meta = ", ".join(extra_segments)
+                display_notes = f"{meta} • {notes}" if notes != "-" else meta
 
             self._result_tree.insert(
                 "",
@@ -614,7 +616,7 @@ class QueryBuilderWindow(tk.Toplevel):
                 values=(
                     " ".join(parts) if parts else "—",  # full_name (visible)
                     spot.mineral_type or "—",  # mineral
-                    notes,
+                    display_notes,
                     self._format_visit_time(spot.last_visit_time),  # visit
                     round(spot.latitude, 4),  # lat
                     round(spot.longitude, 4),  # lon
