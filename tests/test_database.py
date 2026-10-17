@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from surface_navigator.database import DatabaseManager, resolve_db_path
+from surface_navigator.events_dispatcher import EventParams
 from surface_navigator.models import RingScanStatus, StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.predicates import (
@@ -418,6 +419,8 @@ def test_gc_temporaries_keeps_null_timestamps(db: DatabaseManager):
 
 
 def test_update_visit_time_advances(db: DatabaseManager):
+    # add_spot stamps last_visit_time only when we are in that star.
+    db._current_system = "Alpha"
     db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
 
     # Stored value comes back parsed from the ISO string we write.
@@ -438,6 +441,51 @@ def test_update_visit_time_advances(db: DatabaseManager):
     after = db.get_system_spots("Alpha")[0].last_visit_time
     assert after is not None
     assert after > before  # the value was genuinely updated, not just written
+
+
+# ---- conditional last_visit_time (genuine-visit stamping) ------------------
+
+
+def test_add_spot_stamps_visit_when_in_current_system(db: DatabaseManager):
+    db._current_system = "Alpha"
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    assert db.get_system_spots("Alpha")[0].last_visit_time is not None
+
+
+def test_add_spot_leaves_null_when_in_different_system(db: DatabaseManager):
+    # We are in Beta, but adding a spot in Alpha -- we have not visited it.
+    db._current_system = "Beta"
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    assert db.get_system_spots("Alpha")[0].last_visit_time is None
+
+
+def test_add_spot_leaves_null_when_system_unknown(db: DatabaseManager):
+    # No position event yet -> current star is unknown -> do not claim a visit.
+    db._current_system = None
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "iron"))
+    assert db.get_system_spots("Alpha")[0].last_visit_time is None
+
+
+def test_on_position_updated_prefers_location_system(db: DatabaseManager):
+    # On a body: the location's star_system is authoritative over data.system.
+    loc = PlayerLocation(
+        star_system=StarSystem(star_name="Alpha"),
+        body_name="Alpha 1 b",
+    )
+    db._on_position_updated(EventParams(location=loc, system=StarSystem(star_name="Beta")))
+    assert db._current_system == "Alpha"
+
+
+def test_on_position_updated_falls_back_to_event_system(db: DatabaseManager):
+    # In space (no location): fall back to the event's system.
+    db._on_position_updated(EventParams(system=StarSystem(star_name="Gamma")))
+    assert db._current_system == "Gamma"
+
+
+def test_on_position_updated_clears_when_no_system(db: DatabaseManager):
+    db._current_system = "Alpha"
+    db._on_position_updated(EventParams())
+    assert db._current_system is None
 
 
 # ---- star name uniqueness ----

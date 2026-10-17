@@ -68,7 +68,14 @@ _SPOTS_FROM = (
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        # The star we are currently in, from the POSITION_UPDATED stream. Used by
+        # ``add_spot`` to stamp ``last_visit_time`` only for a genuine visit.
+        self._current_system: str | None = None
         self._init_db()
+        # Safe to subscribe here: the data layer already imports ``dispatcher``
+        # to emit signals. Keeping the current star in the DB means ``add_spot``
+        # never has to be handed position context by its callers.
+        dispatcher.subscribe(KnownEvents.POSITION_UPDATED, self._on_position_updated)
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -91,6 +98,35 @@ class DatabaseManager:
         import datetime
 
         return datetime.datetime.now(datetime.timezone.utc).isoformat()  # noqa: UP017
+
+    def _on_position_updated(self, data: EventParams) -> None:
+        """Remember the star we are currently in, from the position stream.
+
+        ``data.location`` is set while on a body/surface; its ``star_system`` is
+        the authoritative source. When in space (location is None) we fall back
+        to the event's ``system`` (which still carries ``star_name`` near a
+        star). If both are absent we are nowhere tracked, so we clear it.
+        """
+        if data.location is not None and data.location.star_system is not None:
+            self._current_system = data.location.star_system.star_name
+        elif data.system is not None:
+            self._current_system = data.system.star_name
+        else:
+            self._current_system = None
+
+    def _visit_timestamp_for(self, star_system: str | None) -> str | None:
+        """Stamp ``now`` only for a genuine visit: the player must be in this star.
+
+        When the current star is unknown (no position event yet) we leave ``None``
+        rather than claim a visit we cannot verify -- so a spot added for a
+        distant system stays "never visited" until we actually jump there.
+        """
+        if (
+            self._current_system is not None
+            and self._current_system == star_system
+        ):
+            return self._now_utc()
+        return None
 
     def _init_db(self):
         with self._get_connection() as conn:
@@ -383,6 +419,9 @@ class DatabaseManager:
             success: bool = False
             with self._get_connection() as conn:
                 star_id = self._get_or_create_star(spot.star_system)
+                # Stamp the visit only when we are actually in this star; otherwise
+                # the spot stays "never visited" until we jump here (see _on_position_updated).
+                last_visit = self._visit_timestamp_for(spot.star_system)
                 cursor = conn.execute(
                     """
                     INSERT INTO surface_spots (
@@ -401,7 +440,7 @@ class DatabaseManager:
                         spot.amount,
                         spot.density,
                         spot.max_miners,
-                        DatabaseManager._now_utc(),
+                        last_visit,
                         spot.notes,
                         spot.flags.value,
                     ),
