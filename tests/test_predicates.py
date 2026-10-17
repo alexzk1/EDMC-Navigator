@@ -14,6 +14,7 @@ from surface_navigator.player_location import DEFAULT_PLANET_RADIUS, SurfacePoin
 from surface_navigator.predicates import (
     KNOWN_PREDICATES,
     And,
+    HasMiners,
     HasTritiumRing,
     InvalidContext,
     IsTemporary,
@@ -247,6 +248,36 @@ def test_on_body_unset_matches_landing_spots():
         "surface_spots.body_name != '' AND (surface_spots.flags & ?) = 0"
     )
     assert params == [SurfaceSpotFlags.TRITIUM_RING_PRESENT.value]
+
+
+# ---- HasMiners (rig miner count) -------------------------------------------
+
+
+def test_has_miners_sql():
+    frag, params = HasMiners(3).sql(_ctx())
+    assert frag == "(surface_spots.max_miners >= ?)"
+    assert params == [3]
+
+
+def test_has_miners_unset_matches_all():
+    frag, params = HasMiners(None).sql(_ctx())
+    assert frag == "1 = 1"
+    assert params == []
+
+
+def test_has_miners_describes_value():
+    assert HasMiners(3).describe() == "with at least 3 miners"
+    assert HasMiners(None).describe() == "Rig Miners"
+
+
+def test_has_miners_validate_context_needs_count():
+    with pytest.raises(InvalidContext, match="miner"):
+        HasMiners(None).validate_context(_ctx())
+
+
+def test_has_miners_roundtrip():
+    q = HasMiners(5)
+    assert deserialize(q.to_dict()) == q
 
 
 # ---- WithinLightYears (euclidean SQL) --------------------------------------

@@ -487,6 +487,49 @@ class OnBody(Predicate):
             raise InvalidContext("Enter a body before searching.")
 
 
+class HasMiners(Predicate):
+    """Matches spots whose rig has at least ``miners`` miners (``max_miners >= ?``).
+
+    Points at ``surface_spots.max_miners``. For the game more miners is always
+    better, so this is a ``>=`` comparison; a rig whose ``max_miners`` is NULL
+    (bad data) never matches, rather than silently matching everything. The
+    widget constrains input to 1-12 (12 is the most a ship carries), so the SQL
+    never sees an out-of-range value.
+    """
+
+    label = "Rig Miners"
+    serial_name = "has_miners"
+
+    def __init__(self, miners: int | None = None) -> None:
+        self.miners = miners
+
+    def describe(self) -> str:
+        if self.miners is None:
+            return self.label
+        return f"with at least {self.miners} miners"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "miners": self.miners}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("miners"))
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.rig_miners import HasMinersInputWidget
+
+        return HasMinersInputWidget(self, parent, data)
+
+    def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
+        if self.miners is None:
+            return "1 = 1", []
+        return "(surface_spots.max_miners >= ?)", [self.miners]
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.miners is None:
+            raise InvalidContext("Enter a rig miner count before searching.")
+
+
 # ---- System predicate (distance in space) ----------------------------------
 
 
@@ -736,6 +779,7 @@ KNOWN_PREDICATES: list[type[Predicate]] = [
     SearchInCurrentSystem,
     MineralIs,
     OnBody,
+    HasMiners,
     HasTritiumRing,
     IsTemporary,
 ]
@@ -752,6 +796,7 @@ _SERIALIZERS: dict[str, type[Predicate]] = {
     HasTritiumRing.serial_name: HasTritiumRing,
     IsTemporary.serial_name: IsTemporary,
     OnBody.serial_name: OnBody,
+    HasMiners.serial_name: HasMiners,
     WithinLightYears.serial_name: WithinLightYears,
     WithinLightYearsOfStar.serial_name: WithinLightYearsOfStar,
     SearchInExactSystem.serial_name: SearchInExactSystem,
