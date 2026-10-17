@@ -598,19 +598,15 @@ class QueryBuilderWindow(tk.Toplevel):
         for spot in spots:
             parts = [p for p in (spot.star_system, spot.body_name) if p]
             notes = spot.notes or "-"
-            extra: str = ""
-            if not spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT:
-                if spot.mineral_type is not None:
-                    extra = f"rigs: {spot.max_miners}"
+            extra_segments: list[str] = []
+            if not (spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT):
                 if spot.spot_number is not None:
-                    tmp = f"spot id: {spot.spot_number}"
-                    if extra:
-                        extra = f"{extra}, {tmp}"
-                    else:
-                        extra = tmp
+                    extra_segments.append(f"spot id: {spot.spot_number}")
+                if spot.mineral_type is not None:
+                    extra_segments.append(f"rigs: {spot.max_miners}")
 
-            if extra:
-                notes = f"{notes} ({extra})"
+            if extra_segments:
+                notes = f"{notes} ({', '.join(extra_segments)})"
 
             self._result_tree.insert(
                 "",
