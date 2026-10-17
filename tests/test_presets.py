@@ -20,8 +20,11 @@ from surface_navigator.predicates import (
     And,
     HasTritiumRing,
     MineralIs,
+    Not,
     OnBody,
     Predicate,
+    ToVisitSpot,
+    deserialize,
 )
 from surface_navigator.presets import (
     BUILTIN_PRESETS,
@@ -73,6 +76,16 @@ def test_builtin_presets_are_readonly():
     assert BUILTIN_PRESETS, "there should be at least one built-in preset"
     assert all(p.readonly for p in BUILTIN_PRESETS)
     assert BUILTIN_PRESETS[0].name == "Find Any Tritium"
+
+
+def test_surface_wonders_preset_structure():
+    # The scenic-spots preset: non-mining surface labels, minus tritium rings.
+    names = [p.name for p in BUILTIN_PRESETS]
+    assert "Surface Wonders" in names
+    preset = next(p for p in BUILTIN_PRESETS if p.name == "Surface Wonders")
+    assert preset.query == And(ToVisitSpot(), Not(HasTritiumRing()))
+    # It round-trips through serialization (so it can be saved/loaded).
+    assert deserialize(preset.query.to_dict()) == preset.query
 
 
 def test_load_returns_builtins_plus_user(manager: PresetManager):

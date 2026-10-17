@@ -23,7 +23,16 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 
-from .predicates import HasTritiumRing, MineralIs, Or, Predicate, deserialize
+from .predicates import (
+    And,
+    HasTritiumRing,
+    MineralIs,
+    Not,
+    Or,
+    Predicate,
+    ToVisitSpot,
+    deserialize,
+)
 
 logger = logging.getLogger("SurfaceNavigator")
 
@@ -58,6 +67,13 @@ BUILTIN_PRESETS: list[Preset] = [
     Preset(
         name="Find Any Tritium",
         query=Or(HasTritiumRing(), MineralIs("tritium")),
+        readonly=True,
+    ),
+    Preset(
+        name="Surface Wonders",
+        # Non-mining surface labels (mountains, landmarks) -- and exclude
+        # tritium rings, which are stored as spots but are not surface places.
+        query=And(ToVisitSpot(), Not(HasTritiumRing())),
         readonly=True,
     ),
 ]
