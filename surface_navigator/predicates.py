@@ -530,6 +530,47 @@ class HasMiners(Predicate):
             raise InvalidContext("Enter a rig miner count before searching.")
 
 
+class ToVisitSpot(Predicate):
+    """Matches a spot that is *not* a mining spot -- neither mineral name is set.
+
+    A row with no ``mineral_type`` and no ``mineral_original`` is just a surface
+    label (a mountain, a landmark) rather than a mining spot, so this predicate
+    is the "show me the non-mining spots" filter. It takes no input, so like a
+    flag it renders its check unconditionally and reuses the display-only flag
+    widget. An empty string counts as "no name" too (a player can write ""), so
+    each column matches on NULL-or-empty rather than NULL-only.
+    """
+
+    label = "To Visit Spot"
+    serial_name = "to_visit_spot"
+
+    def describe(self) -> str:
+        return self.label
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls()
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.flag import FlagStatusWidget
+
+        return FlagStatusWidget(self, parent, data)
+
+    def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
+        # Neither mineral name set -> not a mining spot, just a surface label.
+        # Empty string counts as "no name" too (a player can write ""), so each
+        # column matches on NULL-or-empty rather than NULL-only.
+        return (
+            "(surface_spots.mineral_type IS NULL OR "
+            "surface_spots.mineral_type = '') AND "
+            "(surface_spots.mineral_original IS NULL OR "
+            "surface_spots.mineral_original = '')"
+        ), []
+
+
 # ---- System predicate (distance in space) ----------------------------------
 
 
@@ -782,6 +823,7 @@ KNOWN_PREDICATES: list[type[Predicate]] = [
     HasMiners,
     HasTritiumRing,
     IsTemporary,
+    ToVisitSpot,
 ]
 
 
@@ -797,6 +839,7 @@ _SERIALIZERS: dict[str, type[Predicate]] = {
     IsTemporary.serial_name: IsTemporary,
     OnBody.serial_name: OnBody,
     HasMiners.serial_name: HasMiners,
+    ToVisitSpot.serial_name: ToVisitSpot,
     WithinLightYears.serial_name: WithinLightYears,
     WithinLightYearsOfStar.serial_name: WithinLightYearsOfStar,
     SearchInExactSystem.serial_name: SearchInExactSystem,

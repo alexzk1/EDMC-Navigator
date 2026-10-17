@@ -27,6 +27,7 @@ from surface_navigator.predicates import (
     SearchInCurrentSystem,
     SearchInExactSystem,
     StarNotFoundError,
+    ToVisitSpot,
     Within,
     WithinLightYears,
     WithinLightYearsOfStar,
@@ -278,6 +279,30 @@ def test_has_miners_validate_context_needs_count():
 def test_has_miners_roundtrip():
     q = HasMiners(5)
     assert deserialize(q.to_dict()) == q
+
+
+# ---- ToVisitSpot (non-mining surface label) --------------------------------
+
+
+def test_to_visit_spot_sql():
+    frag, params = ToVisitSpot().sql(_ctx())
+    assert frag == (
+        "(surface_spots.mineral_type IS NULL OR "
+        "surface_spots.mineral_type = '') AND "
+        "(surface_spots.mineral_original IS NULL OR "
+        "surface_spots.mineral_original = '')"
+    )
+    assert params == []
+    # Empty string counts as "no name" too, not just NULL.
+    assert "= ''" in frag
+
+
+def test_to_visit_spot_describes():
+    assert ToVisitSpot().describe() == "To Visit Spot"
+
+
+def test_to_visit_spot_roundtrip():
+    assert deserialize(ToVisitSpot().to_dict()) == ToVisitSpot()
 
 
 # ---- WithinLightYears (euclidean SQL) --------------------------------------
