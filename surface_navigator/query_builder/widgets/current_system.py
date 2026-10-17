@@ -22,12 +22,3 @@ class CurrentSystemInfoWidget(BaseInputWidget):
 
     def load_leaf(self, pred: Predicate) -> None:
         self._refresh_label()
-
-    def _refresh_label(self) -> None:
-        text = self.get_predicate().describe()
-        current = self.data.current_system()
-        if current:
-            text = f"{text} ({current})"
-        if self.is_not():
-            text = f"NOT {text}"
-        self._label.config(text=text)

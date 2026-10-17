@@ -367,6 +367,7 @@ class QueryBuilderWindow(tk.Toplevel):
             "system",
             "body",
             "rigs",
+            "spot_number",
         )
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
@@ -388,7 +389,7 @@ class QueryBuilderWindow(tk.Toplevel):
             "lon": 70,
         }
         for col in columns:
-            if col in ("system", "body", "rigs"):
+            if col in ("system", "body", "rigs", "spot_number"):
                 # Hidden, but kept: the context menu reads these by name.
                 self._result_tree.column(col, width=0, stretch=False)
                 self._result_tree.heading(col, text="")
@@ -597,20 +598,27 @@ class QueryBuilderWindow(tk.Toplevel):
         for spot in spots:
             parts = [p for p in (spot.star_system, spot.body_name) if p]
             notes = spot.notes or "-"
-            if (
-                spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT
-                or spot.mineral_type is None
-            ):
-                notes_rigs = notes
-            else:
-                notes_rigs = f"{notes} (rigs: {spot.max_miners})"
+            extra: str = ""
+            if not spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT:
+                if spot.mineral_type is not None:
+                    extra = f"rigs: {spot.max_miners}"
+                if spot.spot_number is not None:
+                    tmp = f"spot id: {spot.spot_number}"
+                    if extra:
+                        extra = f"{extra}, {tmp}"
+                    else:
+                        extra = tmp
+
+            if extra:
+                notes = f"{notes} ({extra})"
+
             self._result_tree.insert(
                 "",
                 tk.END,
                 values=(
                     " ".join(parts) if parts else "—",  # full_name (visible)
                     spot.mineral_type or "—",  # mineral
-                    notes_rigs,  # note
+                    notes,
                     self._format_visit_time(spot.last_visit_time),  # visit
                     round(spot.latitude, 4),  # lat
                     round(spot.longitude, 4),  # lon
