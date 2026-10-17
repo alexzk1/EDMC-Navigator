@@ -21,6 +21,7 @@ import logging
 import threading
 import tkinter as tk
 import webbrowser
+from collections.abc import Callable
 from tkinter import font as _tk_font
 from tkinter import messagebox, ttk
 from typing import Any
@@ -58,6 +59,28 @@ _LEFT_LEFT_PAD_PX = 5
 logger = logging.getLogger("SurfaceNavigator")
 
 
+def navigation_target(
+    system: str, body: str, lat: str, lon: str
+) -> PlayerLocation | None:
+    """Assemble a navigation target from a results row's four fields.
+
+    Navigation needs all four: the destination star, the body, and the surface
+    coordinates on it. A missing name or unparseable coordinate yields ``None``
+    so the caller simply does not offer navigation for that row.
+    """
+    if not system or not body or not lat or not lon:
+        return None
+    try:
+        player_coord = SurfacePoint(float(lat), float(lon))
+    except (ValueError, TypeError):
+        return None
+    return PlayerLocation(
+        star_system=StarSystem(star_name=system),
+        body_name=body,
+        player_coord=player_coord,
+    )
+
+
 class QueryBuilderWindow(tk.Toplevel):
     """Floating window that composes and runs a surface search."""
 
@@ -72,6 +95,7 @@ class QueryBuilderWindow(tk.Toplevel):
         preset_manager: PresetManager,
         loc: PlayerLocation | StarSystem | None = None,
         star_resolver: Any | None = None,
+        navigate: Callable[[PlayerLocation], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.title("Surface Navigator Managing")
@@ -99,6 +123,9 @@ class QueryBuilderWindow(tk.Toplevel):
             self.current_location = None
             self.current_system = None
         self._star_resolver = star_resolver
+        # The host wires a navigation callback that turns an assembled target
+        # into an actual overlay navigation (see ``MainGUIWidget._navigate_from_builder``).
+        self._navigate = navigate
         self.data = DataContext(
             db_manager, self.current_system.star_name if self.current_system else None
         )
@@ -663,7 +690,19 @@ class QueryBuilderWindow(tk.Toplevel):
             self._result_tree.set(item, "lat"),
             self._result_tree.set(item, "lon"),
         )
-        menu = self._build_context_menu(full_name, location, system)
+        target = (
+            navigation_target(
+                self._result_tree.set(item, "system"),
+                self._result_tree.set(item, "body"),
+                self._result_tree.set(item, "lat"),
+                self._result_tree.set(item, "lon"),
+            )
+            if self._navigate is not None
+            else None
+        )
+        menu = self._build_context_menu(
+            full_name, location, system, target=target
+        )
         # ``tk_popup`` takes *absolute* screen coords (``x_root``/``y_root``), so
         # the menu lands exactly under the cursor regardless of where the tree
         # sits inside the window. ``grab_release`` undoes the grab ``tk_popup``
@@ -674,7 +713,11 @@ class QueryBuilderWindow(tk.Toplevel):
             menu.grab_release()
 
     def _build_context_menu(
-        self, full_name: str, location: str, system: str
+        self,
+        full_name: str,
+        location: str,
+        system: str,
+        target: PlayerLocation | None = None,
     ) -> tk.Menu:
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Copy Name", command=lambda: self._copy(full_name))
@@ -682,6 +725,19 @@ class QueryBuilderWindow(tk.Toplevel):
         menu.add_command(
             label="Visit on EDSM", command=lambda: self._visit_edsm(system)
         )
+        # A navigation entry only when the row yields a well-formed target (all
+        # four fields present). The callback guard lives *inside* the lambda:
+        # the command is deferred until click time, so a runtime None can't be
+        # caught here -- and calling a None callback is exactly what a type
+        # checker flags.
+        if target is not None:
+            menu.add_separator()
+            menu.add_command(
+                label="Navigate To",
+                command=lambda: self._navigate(target)
+                if self._navigate is not None
+                else None,
+            )
         menu.add_separator()
         menu.add_command(label="Cancel", command=menu.destroy)
         return menu

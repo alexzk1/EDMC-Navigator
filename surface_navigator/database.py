@@ -107,7 +107,7 @@ class DatabaseManager:
         to the event's ``system`` (which still carries ``star_name`` near a
         star). If both are absent we are nowhere tracked, so we clear it.
         """
-        if data.location is not None and data.location.star_system is not None:
+        if data.location is not None and data.location.star_system is not None:  # pyright: ignore[reportUnnecessaryComparison]
             self._current_system = data.location.star_system.star_name
         elif data.system is not None:
             self._current_system = data.system.star_name
@@ -121,10 +121,7 @@ class DatabaseManager:
         rather than claim a visit we cannot verify -- so a spot added for a
         distant system stays "never visited" until we actually jump there.
         """
-        if (
-            self._current_system is not None
-            and self._current_system == star_system
-        ):
+        if self._current_system is not None and self._current_system == star_system:
             return self._now_utc()
         return None
 

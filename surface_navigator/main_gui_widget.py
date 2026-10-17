@@ -34,6 +34,30 @@ def render_note(spot: SurfaceSpot) -> str:
     return note
 
 
+def is_navigable(
+    target: PlayerLocation,
+    current_location: PlayerLocation | None,
+    current_system: StarSystem | None,
+) -> bool:
+    """Whether a navigation target can be reached from the current position.
+
+    We can only navigate to a spot we are actually standing on: the player must
+    be on a surface (``current_location`` set) in the same star and on the same
+    body as the target. A target in another system or body is a valid search
+    result, but not a navigation target until the player gets there.
+    """
+    if (
+        current_location is None
+        or current_system is None
+        or target.player_coord is None
+    ):
+        return False
+    return (
+        target.body_name == current_location.body_name
+        and target.star_system.star_name == current_system.star_name
+    )
+
+
 class MainGUIWidget(ttk.Frame):
     # Width (px) of the narrow numeric-style columns: "#", "body", "rigs", "nav".
     _NUMERIC_COLUMNS_WIDTH: int = 15
@@ -252,6 +276,32 @@ class MainGUIWidget(ttk.Frame):
         except (ValueError, IndexError, RuntimeError) as e:
             messagebox.showwarning("Navigation error", f"{e}")
 
+    def _navigate_from_builder(self, target: PlayerLocation) -> None:
+        """Navigate to a spot the query builder assembled from a results row.
+
+        The builder only forwards a target when all four fields are present;
+        here we validate *context* -- we must actually be standing on that body.
+        """
+        if not is_navigable(target, self.current_location, self.current_system):
+            if self.current_location is None:
+                messagebox.showwarning(
+                    "Navigation Error",
+                    "Cannot navigate to system markers. Please approach a body first.",
+                )
+            else:
+                messagebox.showwarning(
+                    "Navigation Error",
+                    "That spot is not in your current system and body. "
+                    "Travel there first.",
+                )
+            return
+        self.overlay.navigate_to(target.player_coord)
+        if not self.overlay.is_navigating():
+            messagebox.showwarning(
+                "Navigation Error",
+                "Navigation was not started. Most likely overlay is not installed.",
+            )
+
     def _on_db_modified(self, data: EventParams | None = None) -> None:
         """Rebuild the whole table after a DB change (add/update/delete, possibly
         done in bulk) and re-sort by distance.
@@ -411,4 +461,5 @@ class MainGUIWidget(ttk.Frame):
             preset_manager=self.preset_manager,
             loc=loc,
             star_resolver=StarDataResolver(self.db_manager),
+            navigate=self._navigate_from_builder,
         )
