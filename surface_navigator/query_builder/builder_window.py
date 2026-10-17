@@ -148,6 +148,7 @@ class QueryBuilderWindow(tk.Toplevel):
         self._remove_line_btn: ttk.Button
         self._reset_builder_btn: ttk.Button
         self._load_btn: ttk.Button
+        self._delete_btn: ttk.Button
         self._save_preset_btn: ttk.Button
         self._gc_all_btn: ttk.Button
         self._gc_recent_btn: ttk.Button
@@ -297,6 +298,10 @@ class QueryBuilderWindow(tk.Toplevel):
             "Load the selected preset into the builder.",
         )
         Tooltip(
+            self._delete_btn,
+            "Delete the selected preset. Read-only built-ins cannot be deleted.",
+        )
+        Tooltip(
             self._save_preset_btn,
             "Save the current query as a named preset.",
         )
@@ -346,11 +351,18 @@ class QueryBuilderWindow(tk.Toplevel):
         palette = self._create_scrollable_container(parent)
         self._preset_list = tk.Listbox(palette, height=6)
         self._preset_list.pack(fill=tk.Y, expand=True, padx=(_LEFT_LEFT_PAD_PX, 0))
-        self._preset_list.bind("<<ListboxSelected>>", self._on_preset_selected)
+        self._preset_list.bind("<<ListboxSelect>>", self._on_preset_selected)
+        # Load + Delete share a row: Load expands to fill, Delete stays compact.
+        preset_controls = ttk.Frame(palette)
+        preset_controls.pack(fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0))
         self._load_btn = ttk.Button(
-            palette, text="📂 Load", command=self._load_selected_preset
+            preset_controls, text="📂 Load", command=self._load_selected_preset
         )
-        self._load_btn.pack(fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0))
+        self._load_btn.pack(side=tk.LEFT, expand=True, padx=(0, 2))
+        self._delete_btn = ttk.Button(
+            preset_controls, text="🗑️ Delete", command=self._delete_selected_preset
+        )
+        self._delete_btn.pack(side=tk.LEFT)
 
         ttk.Label(palette, text="⌨️ Save current as:").pack(anchor=tk.W, pady=(10, 0))
         self._save_entry = ttk.Entry(palette)
@@ -360,6 +372,7 @@ class QueryBuilderWindow(tk.Toplevel):
         )
         self._save_preset_btn.pack(fill=tk.X, pady=(2, 0), padx=(_LEFT_LEFT_PAD_PX, 0))
         self._reload_presets()
+        self._update_delete_button_state()
 
     def _add_line_controls(self, parent: tk.Widget) -> None:
         controls = ttk.Frame(parent)
@@ -700,9 +713,7 @@ class QueryBuilderWindow(tk.Toplevel):
             if self._navigate is not None
             else None
         )
-        menu = self._build_context_menu(
-            full_name, location, system, target=target
-        )
+        menu = self._build_context_menu(full_name, location, system, target=target)
         # ``tk_popup`` takes *absolute* screen coords (``x_root``/``y_root``), so
         # the menu lands exactly under the cursor regardless of where the tree
         # sits inside the window. ``grab_release`` undoes the grab ``tk_popup``
@@ -734,9 +745,9 @@ class QueryBuilderWindow(tk.Toplevel):
             menu.add_separator()
             menu.add_command(
                 label="Navigate To",
-                command=lambda: self._navigate(target)
-                if self._navigate is not None
-                else None,
+                command=lambda: (
+                    self._navigate(target) if self._navigate is not None else None
+                ),
             )
         menu.add_separator()
         menu.add_command(label="Cancel", command=menu.destroy)
@@ -803,8 +814,48 @@ class QueryBuilderWindow(tk.Toplevel):
         for preset in self.preset_manager.load():
             self._preset_list.insert(tk.END, preset.name)
 
+    def _delete_selected_preset(self) -> None:
+        """Delete the selected user preset; built-ins (read-only) cannot be removed.
+
+        The listbox index maps directly to ``preset_manager.load()`` order, which
+        is the persisted order, so removing by name keeps the remaining presets in
+        place -- the row below the deleted one shifts up into the same index.
+        Re-select that index so a repeated delete walks down the list; when the
+        last user preset is gone the index is out of range and the list is left
+        unselected.
+        """
+        selection = self._preset_list.curselection()  # type: ignore
+        if not selection:
+            return
+        idx = selection[0]  # pyright: ignore[reportUnknownVariableType]
+        if not self._deletable_at(idx):  # pyright: ignore[reportUnknownArgumentType]
+            return
+        self.preset_manager.remove(self.preset_manager.load()[idx].name)  # type: ignore
+        self._reload_presets()
+        if idx < self._preset_list.size():
+            self._preset_list.selection_set(idx)  # pyright: ignore[reportUnknownArgumentType]
+            self._preset_list.see(idx)  # pyright: ignore[reportUnknownArgumentType]
+        self._update_delete_button_state()
+
+    def _deletable_at(self, idx: int) -> bool:
+        """Whether the preset at ``idx`` can be deleted: in range and not a
+        read-only built-in."""
+        presets = self.preset_manager.load()
+        return idx < len(presets) and not presets[idx].readonly
+
+    def _update_delete_button_state(self) -> None:
+        """Enable Delete only when a deletable preset is selected; an empty
+        selection or a read-only built-in disables it, so the no-op is never a
+        mystery."""
+        selection = self._preset_list.curselection()  # type: ignore
+        editable = bool(selection) and self._deletable_at(selection[0])  # pyright: ignore[reportUnknownArgumentType]
+        self._delete_btn.config(state="normal" if editable else "disabled")
+
     def _on_preset_selected(self, _event: Any = None) -> None:
-        self._load_selected_preset()
+        # Selecting a preset only refreshes the Delete button state -- loading is
+        # an explicit LOAD-button action, so a selection change can't silently
+        # drop a query the user is mid-edit.
+        self._update_delete_button_state()
 
     def _load_selected_preset(self) -> None:
         selection = self._preset_list.curselection()  # type: ignore
