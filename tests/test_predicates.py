@@ -5,6 +5,7 @@ parameterized SQL fragment, and describes itself in text (so the UI never
 hard-codes strings that must stay in sync with the code).
 """
 
+import re
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +21,7 @@ from surface_navigator.predicates import (
     IsTemporary,
     MineralIs,
     Not,
+    NotVisitedRecently,
     OnBody,
     Or,
     Predicate,
@@ -28,6 +30,7 @@ from surface_navigator.predicates import (
     SearchInExactSystem,
     StarNotFoundError,
     ToVisitSpot,
+    VisitedRecently,
     Within,
     WithinLightYears,
     WithinLightYearsOfStar,
@@ -303,6 +306,76 @@ def test_to_visit_spot_describes():
 
 def test_to_visit_spot_roundtrip():
     assert deserialize(ToVisitSpot().to_dict()) == ToVisitSpot()
+
+
+# ---- Visit-recency predicates ----------------------------------------------
+# ``last_visit_time`` is stamped only for a genuine visit, and is NULL for spots
+# never visited. ``datetime()`` normalises the stored ISO-8601 string (``T``
+# separator, ``+00:00`` offset) against the ``YYYY-MM-DD HH:MM:SS`` cutoff, so
+# the comparison is time-correct rather than a lexicographic string compare.
+
+
+def test_visited_recently_sql_matches_recent_only():
+    frag, params = VisitedRecently(7).sql(_ctx())
+    assert frag == "(datetime(surface_spots.last_visit_time) >= ?)"
+    assert len(params) == 1
+    # A UTC YYYY-MM-DD HH:MM:SS cutoff string.
+    assert re.match(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", params[0])
+
+
+def test_visited_recently_unset_matches_all():
+    frag, params = VisitedRecently(None).sql(_ctx())
+    assert frag == "1 = 1"
+    assert params == []
+
+
+def test_visited_recently_never_visited_excluded():
+    # NULL >= ? is falsy in SQLite, so never-visited rows fall out naturally.
+    frag, params = VisitedRecently(7).sql(_ctx())
+    assert "IS NULL" not in frag  # no NULL handling: NULL is simply excluded
+
+
+def test_not_visited_recently_sql_includes_never_visited():
+    # The whole point of a dedicated class: NULL (never-visited) IS included,
+    # whereas NOT(VisitedRecently) would drop it.
+    frag, params = NotVisitedRecently(7).sql(_ctx())
+    assert "last_visit_time IS NULL" in frag
+    assert "datetime(surface_spots.last_visit_time) < ?" in frag
+    assert len(params) == 1
+
+
+def test_not_visited_recently_unset_matches_all():
+    frag, params = NotVisitedRecently(None).sql(_ctx())
+    assert frag == "1 = 1"
+    assert params == []
+
+
+def test_not_visited_differs_from_not_wrapper():
+    # Not(VisitedRecently) -> NOT(last_visit_time >= cutoff): drops NULL rows,
+    # the opposite of a "haven't been" search. The dedicated class keeps them.
+    negated = Not(VisitedRecently(7)).sql(_ctx())[0]
+    dedicated = NotVisitedRecently(7).sql(_ctx())[0]
+    assert negated.startswith("NOT (")
+    assert negated != dedicated
+
+
+def test_visit_recency_describes():
+    assert VisitedRecently(7).describe() == "visited within last 7 days"
+    assert VisitedRecently(None).describe() == "Visited Recently"
+    assert NotVisitedRecently(30).describe() == "not visited in last 30 days"
+    assert NotVisitedRecently(None).describe() == "Not Visited Recently"
+
+
+def test_visit_recency_validate_context_needs_days():
+    with pytest.raises(InvalidContext, match="day"):
+        VisitedRecently(None).validate_context(_ctx())
+    with pytest.raises(InvalidContext, match="day"):
+        NotVisitedRecently(None).validate_context(_ctx())
+
+
+def test_visit_recency_roundtrip():
+    assert deserialize(VisitedRecently(7).to_dict()) == VisitedRecently(7)
+    assert deserialize(NotVisitedRecently(14).to_dict()) == NotVisitedRecently(14)
 
 
 # ---- WithinLightYears (euclidean SQL) --------------------------------------

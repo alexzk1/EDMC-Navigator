@@ -16,6 +16,39 @@ from ...predicates import Predicate
 from ..base import DataContext, PredicateEditor
 
 
+class NoNotInputWidget(PredicateEditor):
+    """Input widget with a describe label but NO NOT toggle.
+
+    Some predicates express their polarity through their own class (the
+    visit-recently pair): a ``NOT`` button would be misleading, so the header
+    shows only the live label, never a negation button. Because negation is
+    class-level, ``is_not`` is pinned to ``False`` and ``set_not`` is a no-op --
+    a hand-edited ``Not(...)`` in a saved query is dropped rather than applied,
+    so it can never render a wrong filter.
+    """
+
+    def __init__(self, owner: Predicate, parent: tk.Widget, data: DataContext) -> None:
+        super().__init__(owner, parent, data)
+        self._build_header()
+        self._build_input()
+        self.load_leaf(owner)
+
+    def _build_header(self) -> None:
+        header = ttk.Frame(self)
+        header.pack(fill=tk.X, pady=(0, 4))
+        self._label = ttk.Label(header, text="")
+        self._label.pack(side=tk.LEFT)
+
+    def _refresh_label(self) -> None:
+        self._label.config(text=self.get_predicate().describe())
+
+    def is_not(self) -> bool:
+        return False
+
+    def set_not(self, value: bool) -> None:
+        pass
+
+
 class BaseInputWidget(PredicateEditor):
     """Base for widgets that render a single-field input plus a NOT toggle."""
 

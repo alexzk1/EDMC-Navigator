@@ -571,6 +571,130 @@ class ToVisitSpot(Predicate):
         ), []
 
 
+# ---- Temporal predicates (visit recency) ----------------------------------
+# ``last_visit_time`` is stored as an ISO-8601 string and stamped only for a
+# genuine visit (see ``DatabaseManager.add_spot``). ``datetime()`` normalises
+# both sides (``T``/space separators, timezone) to ``YYYY-MM-DD HH:MM:SS`` UTC,
+# so the comparison is done there rather than lexicographically on the raw
+# strings (which would misorder ``T`` vs space and differing precisions).
+
+
+def _cutoff_iso(days: float) -> str:
+    """ISO cutoff ``days`` ago, formatted for SQLite's ``datetime()`` compare."""
+    import datetime
+
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(days=days)
+    )
+    return cutoff.strftime("%Y-%m-%d %H:%M:%S")
+
+
+class VisitedRecently(Predicate):
+    """Match spots visited within the last ``days`` (``last_visit_time >= cutoff``).
+
+    Never-visited (NULL) rows fall out naturally: ``NULL >= ?`` is falsy, so this
+    is a real "been there recently" filter. Polarity is class-level, so the
+    widget shows no ``NOT`` toggle.
+    """
+
+    label = "Visited Recently"
+    serial_name = "visited_recently"
+
+    def __init__(self, days: float | None = None) -> None:
+        self.days = days
+
+    def describe(self) -> str:
+        if self.days is None:
+            return self.label
+        return f"visited within last {self.days:.0f} days"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "days": self.days}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("days"))
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.visit import NumericLabelWidget
+
+        return NumericLabelWidget(
+            self,
+            parent,
+            data,
+            leaf_cls=VisitedRecently,
+            field="days",
+            label="Days",
+            unit="d",
+        )
+
+    def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
+        if self.days is None:
+            return "1 = 1", []
+        cutoff = _cutoff_iso(self.days)
+        return "(datetime(surface_spots.last_visit_time) >= ?)", [cutoff]
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.days is None:
+            raise InvalidContext("Enter a number of days before searching.")
+
+
+class NotVisitedRecently(Predicate):
+    """Match spots NOT visited within the last ``days`` (never-visited included).
+
+    Deliberately *not* ``Not(VisitedRecently)``: that renders
+    ``NOT(last_visit_time >= cutoff)`` which drops NULL (never-visited) rows --
+    the opposite of what a "haven't been" search wants. Here NULL rows are
+    explicitly included. Polarity is class-level, so the widget shows no
+    ``NOT`` toggle.
+    """
+
+    label = "Not Visited Recently"
+    serial_name = "not_visited_recently"
+
+    def __init__(self, days: float | None = None) -> None:
+        self.days = days
+
+    def describe(self) -> str:
+        if self.days is None:
+            return self.label
+        return f"not visited in last {self.days:.0f} days"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": self.serial_name, "days": self.days}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Predicate:
+        return cls(data.get("days"))
+
+    def make_widget(self, parent: Any, *, data: Any):
+        from .query_builder.widgets.visit import NumericLabelWidget
+
+        return NumericLabelWidget(
+            self,
+            parent,
+            data,
+            leaf_cls=NotVisitedRecently,
+            field="days",
+            label="Days",
+            unit="d",
+        )
+
+    def sql(self, ctx: QueryContext) -> tuple[str, list[Any]]:
+        if self.days is None:
+            return "1 = 1", []
+        cutoff = _cutoff_iso(self.days)
+        return (
+            "(surface_spots.last_visit_time IS NULL OR "
+            "datetime(surface_spots.last_visit_time) < ?)"
+        ), [cutoff]
+
+    def validate_context(self, ctx: QueryContext) -> None:
+        if self.days is None:
+            raise InvalidContext("Enter a number of days before searching.")
+
+
 # ---- System predicate (distance in space) ----------------------------------
 
 
@@ -824,6 +948,8 @@ KNOWN_PREDICATES: list[type[Predicate]] = [
     HasTritiumRing,
     IsTemporary,
     ToVisitSpot,
+    VisitedRecently,
+    NotVisitedRecently,
 ]
 
 
@@ -840,6 +966,8 @@ _SERIALIZERS: dict[str, type[Predicate]] = {
     OnBody.serial_name: OnBody,
     HasMiners.serial_name: HasMiners,
     ToVisitSpot.serial_name: ToVisitSpot,
+    VisitedRecently.serial_name: VisitedRecently,
+    NotVisitedRecently.serial_name: NotVisitedRecently,
     WithinLightYears.serial_name: WithinLightYears,
     WithinLightYearsOfStar.serial_name: WithinLightYearsOfStar,
     SearchInExactSystem.serial_name: SearchInExactSystem,
