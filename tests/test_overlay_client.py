@@ -11,6 +11,8 @@ surface coordinate, so this method must:
   * only feed the extrapolator when both a location and a coordinate exist.
 """
 
+import math
+
 from surface_navigator.events_dispatcher import EventParams
 from surface_navigator.overlay_client import OverlayClient
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
@@ -88,3 +90,42 @@ def test_arrow_svg_rotates_by_relative_angle():
 
     svg90 = OverlayClient._arrow_svg(80, 90.0, "#62FF00")
     assert "rotate(90.0 40.0 40.0)" in svg90
+
+
+def test_smoothing_snaps_to_target_on_first_call():
+    """First reading has no history, so we start with zero lag."""
+    client = _client()
+    client._arrow_rel = None
+    assert client._smooth_arrow_rel(45.0, 0.0) == 45.0
+
+
+def test_smoothing_does_not_move_when_time_has_not_passed():
+    """dt == 0 -> factor == 0 -> no move, so a same-tick re-entry is a no-op."""
+    client = _client()
+    client._arrow_rel = 30.0
+    client._arrow_ts = 100.0
+    assert client._smooth_arrow_rel(90.0, 100.0) == 30.0
+
+
+def test_smoothing_moves_toward_target_by_exponential_factor():
+    """One tau elapses -> factor = 1 - e^-1, so we cover that fraction of the
+    gap toward the target."""
+    client = _client()
+    client._arrow_rel = 0.0
+    client._arrow_ts = 0.0
+    result = client._smooth_arrow_rel(90.0, 1.0)
+    expected = 90.0 * (1 - math.exp(-1.0))
+    assert abs(result - expected) < 1e-6
+
+
+def test_smoothing_takes_shortest_way_across_359_1():
+    """350 -> 10 is +20 deg, not -340; the filter must cross the boundary, not
+    spin the long way around."""
+    client = _client()
+    client._arrow_rel = 350.0
+    client._arrow_ts = 0.0
+    result = client._smooth_arrow_rel(10.0, 2.0)
+    factor = 1 - math.exp(-2.0)
+    expected = (350.0 + ((10.0 - 350.0 + 180.0) % 360.0 - 180.0) * factor) % 360.0
+    assert abs(result - expected) < 1e-6
+    assert result < 20.0  # landed near 10, proving the short path

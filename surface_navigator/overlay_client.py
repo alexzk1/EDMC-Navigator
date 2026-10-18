@@ -50,6 +50,10 @@ class OverlayClient:
     # threshold below the game's ~2s Status cadence keeps the display fresh
     # between updates without spamming redundant projected positions.
     STALE_THRESHOLD_SEC: float = 1.0
+    # Arrow smoothing time constant (seconds). Larger = plainer but laggier.
+    # Keyed on elapsed time (not frame count), so it is independent of game
+    # cadence -- exactly like the position projection, it never "breaks".
+    ARROW_TAU_SECS: float = 0.3
 
     def __init__(self, conf: OverlayTextConf):
         self._config = conf
@@ -64,6 +68,10 @@ class OverlayClient:
         self._extrapolator: VelocityExtrapolator = VelocityExtrapolator()
         self._last_real_ts: float = 0.0
         self._timer_id: int | None = None
+
+        # Smoothing state for the direction arrow (see ``_smooth_arrow_rel``).
+        self._arrow_rel: float | None = None
+        self._arrow_ts: float = 0.0
 
         self._has_multiline = False
         self._has_multiline = self.supports_multiline()
@@ -259,24 +267,46 @@ class OverlayClient:
         older ones -- same ``id`` either way, so ``ttl: 0`` clears both. Returns
         without drawing when heading is unknown: an arrow needs the player's
         facing as reference, so without it it would just spin uselessly.
+
+        The raw relative angle is low-pass filtered first so the arrow sweeps
+        toward the target instead of snapping to each discrete game reading.
         """
         if self._overlay is None or self._destination is None:
             return
         heading = self._location.heading_deg if self._location else None
         if heading is None:
             return
+        now = time.time()
+        rel = self._smooth_arrow_rel((bearing - heading) % 360, now)
         if self.supports_svg():
-            self._draw_direction_arrow_svg(bearing, heading)
+            self._draw_direction_arrow_svg(rel)
         else:
-            self._draw_direction_arrow_outline(bearing, heading)
+            self._draw_direction_arrow_outline(rel)
 
-    def _draw_direction_arrow_outline(self, bearing: float, heading: float):
+    def _smooth_arrow_rel(self, rel_target: float, now: float) -> float:
+        """Exponential decay of the arrow angle toward ``rel_target``.
+
+        Keyed on elapsed time, so it is independent of game cadence and cannot
+        "break" when updates speed up or slow down. The shortest-angular-delta
+        keeps it from spinning the long way round across the 359/1 boundary.
+        The first call snaps to the target so navigation starts with no lag.
+        """
+        if self._arrow_rel is None:
+            self._arrow_rel = rel_target
+        else:
+            dt = max(0.0, now - self._arrow_ts)
+            delta = ((rel_target - self._arrow_rel + 180.0) % 360.0) - 180.0
+            factor = 1.0 - math.exp(-dt / self.ARROW_TAU_SECS)
+            self._arrow_rel = (self._arrow_rel + delta * factor) % 360.0
+        self._arrow_ts = now
+        return self._arrow_rel
+
+    def _draw_direction_arrow_outline(self, rel: float):
         """Outline arrow via the primitive vector API (the overlay does not fill
         vector polygons). The apex points at the target inside the configured
-        square."""
+        square. ``rel`` is the (already smoothed) relative angle."""
         cx = self._config.arrow_x + self._config.arrow_size / 2
         cy = self._config.arrow_y + self._config.arrow_size / 2
-        rel = (bearing - heading) % 360
         r = 0.85 * self._config.arrow_size / 2
 
         assert self._overlay is not None
@@ -290,17 +320,16 @@ class OverlayClient:
             }
         )
 
-    def _draw_direction_arrow_svg(self, bearing: float, heading: float):
+    def _draw_direction_arrow_svg(self, rel: float):
         """Filled arrow via SVG: a static triangle pointing up, rotated by the
         relative angle through the transform so C++ does the trig. Same id as the
-        outline version, so it replaces (and is cleared by) it."""
+        outline version, so it replaces (and is cleared by) it. ``rel`` is the
+        (already smoothed) relative angle."""
         size = self._config.arrow_size
         assert self._overlay is not None
         self._overlay.send_svg(
             OverlayClient.MESSAGE_ID + "arrow",
-            OverlayClient._arrow_svg(
-                size, (bearing - heading) % 360, self._config.color
-            ),
+            OverlayClient._arrow_svg(size, rel, self._config.color),
             self._config.arrow_x,
             self._config.arrow_y,
             OverlayClient.TEXT_TIMEOUT_SEC,
@@ -362,6 +391,8 @@ class OverlayClient:
     def navigate_to(self, point: SurfacePoint | None):
         self._destination = None
         self._stop_timer()
+        # Drop the smoothed angle so the next target starts with no lag.
+        self._arrow_rel = None
         if point is None or not self.is_available():
             return
         self._destination = point
