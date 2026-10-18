@@ -58,3 +58,22 @@ def test_update_location_fed_with_valid_coord():
     client._update_location(EventParams(location=location))
     assert len(client._extrapolator._samples) == before + 1
     assert client._location is location
+
+
+def test_arrow_apex_points_forward_at_rel_zero():
+    """At rel=0 the apex sits straight "up" (screen-up = smaller y) over the
+    center, since heading == bearing means the target is straight ahead."""
+    cx, cy, r = 100.0, 100.0, 40.0
+    pts = OverlayClient._arrow_points(cx, cy, r, 0.0)
+    apex = pts[0]
+    assert apex["x"] == int(round(cx))
+    assert apex["y"] == int(round(cy - r))  # above center
+
+
+def test_arrow_apex_swings_right_for_east_target():
+    """A target 90 deg clockwise from facing (East) puts the apex to the right
+    of center on screen."""
+    cx, cy, r = 100.0, 100.0, 40.0
+    apex = OverlayClient._arrow_points(cx, cy, r, 90.0)[0]
+    assert apex["x"] == int(round(cx + r))
+    assert apex["y"] == int(round(cy))

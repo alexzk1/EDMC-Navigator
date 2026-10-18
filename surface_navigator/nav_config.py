@@ -28,6 +28,11 @@ class OverlayTextConf:
     color: str = "#62FF00"
     color_reached: str = "#FF0000"
     size: str = "normal"
+    # Direction arrow: top-left corner of its square + side length in pixels.
+    # The arrow is inscribed in that square. Defaults are tentative -- tune in-game.
+    arrow_x: int = int((1920 - 80) / 2)
+    arrow_y: int = 320
+    arrow_size: int = 80
 
 
 # How long (seconds) an overlay message/SVG stays on screen.

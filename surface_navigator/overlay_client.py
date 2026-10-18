@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from enum import Enum, auto
 
@@ -108,6 +109,10 @@ class OverlayClient:
         if self._overlay is None:
             return
 
+        if not is_going_on:
+            # Drop the arrow so it does not linger once navigation ends.
+            self._overlay.send_raw({"id": OverlayClient.MESSAGE_ID + "arrow", "ttl": 0})
+
         if self.supports_svg():
             approaching: str = """
             <svg xmlns:xlink="http://www.w3.org/1999/xlink" height="36" width="160" xmlns="http://www.w3.org/2000/svg" ><defs ></defs> <rect x="0" rx="18.0" ry="18.0" y="0" height="36" width="160" stroke="#00FF88" stroke-width="1.5" fill="rgba(0, 0, 0, 0.12)" /> <circle cx="20" cy="18.0" r="5" fill="#00FF88" /> <text x="35" y="23.0" font-weight="bold" font-family="Arial, sans-serif" font-size="14" fill="#00FF88" >APPROACHING</text></svg>
@@ -184,7 +189,7 @@ class OverlayClient:
         )
         # A projected (extrapolated) position is only shown -- it must never
         # drop the active target or fire "Target Reached!". Real updates
-        # (``position is None``) keep that behaviour.
+        # (``position is None``) keep that behavior.
         if position is None:
             status = OverlayClient._get_navigation_status(dist)
             if status == NavigationStatus.REACHED:
@@ -204,6 +209,7 @@ class OverlayClient:
                 return
 
         bearing = NavigationUtils.calculate_bearing(player_coord, self._destination)
+        self._draw_direction_arrow(bearing)
         dist_txt = NavigationUtils.format_distance(dist)
         if self.supports_multiline():
             txt = f"NAVIGATING:\n\tBearing: {bearing:.2f}°\n\tDistance: {dist_txt} (surface)"
@@ -247,6 +253,56 @@ class OverlayClient:
             OverlayClient.TEXT_TIMEOUT_SEC,
             self._config.size,
         )
+
+    def _draw_direction_arrow(self, bearing: float):
+        """Draw the rotating direction arrow as an outline (the overlay does not
+        fill vector polygons). The arrow sits in the configured square and its
+        apex points at the target. Returns without drawing when heading is
+        unknown -- an arrow needs the player's facing as reference, so without it
+        it would just spin uselessly.
+        """
+        if self._overlay is None or self._destination is None:
+            return
+        heading = self._location.heading_deg if self._location else None
+        if heading is None:
+            return
+        cx = self._config.arrow_x + self._config.arrow_size / 2
+        cy = self._config.arrow_y + self._config.arrow_size / 2
+        rel = (bearing - heading) % 360
+        r = 0.85 * self._config.arrow_size / 2
+        self._overlay.send_raw(
+            {
+                "id": OverlayClient.MESSAGE_ID + "arrow",
+                "shape": "vect",
+                "vector": OverlayClient._arrow_points(cx, cy, r, rel),
+                "color": self._config.color,
+                "ttl": OverlayClient.TEXT_TIMEOUT_SEC,
+            }
+        )
+
+    @staticmethod
+    def _arrow_points(
+        cx: float, cy: float, r: float, rel_deg: float
+    ) -> list[dict[str, int]]:
+        """Points of a closed outline triangle whose apex points toward the
+        target. ``rel_deg`` is how far clockwise from the player's facing the
+        target is. ``r`` is the apex radius inside the square. Screen y grows
+        downward, so apex = (sin(rel), -cos(rel))."""
+        rel = math.radians(rel_deg)
+        sin_r, cos_r = math.sin(rel), math.cos(rel)
+        # Base sits `back` behind center (toward the tail), apex `r` in front.
+        back = 0.6 * r
+        apex_x, apex_y = cx + r * sin_r, cy - r * cos_r
+        base_cx, base_cy = cx - back * sin_r, cy + back * cos_r
+        half_w = 0.55 * r
+        right_x, right_y = base_cx + half_w * cos_r, base_cy + half_w * sin_r
+        left_x, left_y = base_cx - half_w * cos_r, base_cy - half_w * sin_r
+        return [
+            {"x": int(apex_x), "y": int(apex_y)},
+            {"x": int(right_x), "y": int(right_y)},
+            {"x": int(left_x), "y": int(left_y)},
+            {"x": int(apex_x), "y": int(apex_y)},  # close the polygon
+        ]
 
     def is_navigating(self):
         return self._destination is not None and self.is_available()
