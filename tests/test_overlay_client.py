@@ -77,3 +77,14 @@ def test_arrow_apex_swings_right_for_east_target():
     apex = OverlayClient._arrow_points(cx, cy, r, 90.0)[0]
     assert apex["x"] == int(round(cx + r))
     assert apex["y"] == int(round(cy))
+
+
+def test_arrow_svg_rotates_by_relative_angle():
+    """The SVG points the static up-triangle through rel via transform, so C++
+    does the rotation. rel=0 keeps apex up; rel=90 swings it clockwise."""
+    svg0 = OverlayClient._arrow_svg(80, 0.0, "#62FF00")
+    assert "rotate(0.0 40.0 40.0)" in svg0
+    assert "points=" in svg0 and "url(#navArrow)" in svg0
+
+    svg90 = OverlayClient._arrow_svg(80, 90.0, "#62FF00")
+    assert "rotate(90.0 40.0 40.0)" in svg90

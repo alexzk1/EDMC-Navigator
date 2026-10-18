@@ -255,21 +255,31 @@ class OverlayClient:
         )
 
     def _draw_direction_arrow(self, bearing: float):
-        """Draw the rotating direction arrow as an outline (the overlay does not
-        fill vector polygons). The arrow sits in the configured square and its
-        apex points at the target. Returns without drawing when heading is
-        unknown -- an arrow needs the player's facing as reference, so without it
-        it would just spin uselessly.
+        """Direction arrow dispatcher. Filled SVG on modern overlays, outline on
+        older ones -- same ``id`` either way, so ``ttl: 0`` clears both. Returns
+        without drawing when heading is unknown: an arrow needs the player's
+        facing as reference, so without it it would just spin uselessly.
         """
         if self._overlay is None or self._destination is None:
             return
         heading = self._location.heading_deg if self._location else None
         if heading is None:
             return
+        if self.supports_svg():
+            self._draw_direction_arrow_svg(bearing, heading)
+        else:
+            self._draw_direction_arrow_outline(bearing, heading)
+
+    def _draw_direction_arrow_outline(self, bearing: float, heading: float):
+        """Outline arrow via the primitive vector API (the overlay does not fill
+        vector polygons). The apex points at the target inside the configured
+        square."""
         cx = self._config.arrow_x + self._config.arrow_size / 2
         cy = self._config.arrow_y + self._config.arrow_size / 2
         rel = (bearing - heading) % 360
         r = 0.85 * self._config.arrow_size / 2
+
+        assert self._overlay is not None
         self._overlay.send_raw(
             {
                 "id": OverlayClient.MESSAGE_ID + "arrow",
@@ -278,6 +288,48 @@ class OverlayClient:
                 "color": self._config.color,
                 "ttl": OverlayClient.TEXT_TIMEOUT_SEC,
             }
+        )
+
+    def _draw_direction_arrow_svg(self, bearing: float, heading: float):
+        """Filled arrow via SVG: a static triangle pointing up, rotated by the
+        relative angle through the transform so C++ does the trig. Same id as the
+        outline version, so it replaces (and is cleared by) it."""
+        size = self._config.arrow_size
+        assert self._overlay is not None
+        self._overlay.send_svg(
+            OverlayClient.MESSAGE_ID + "arrow",
+            OverlayClient._arrow_svg(
+                size, (bearing - heading) % 360, self._config.color
+            ),
+            self._config.arrow_x,
+            self._config.arrow_y,
+            OverlayClient.TEXT_TIMEOUT_SEC,
+        )
+
+    @staticmethod
+    def _arrow_svg(size: int, rel_deg: float, color: str) -> str:
+        """SVG of a triangle pointing up, to be rotated by ``rel_deg`` around the
+        square center via ``transform``. A radial gradient + low alpha keeps it a
+        translucent glow rather than a solid blob over the game."""
+        cx = cy = size / 2
+        r = 0.85 * size / 2
+        half_base = 0.55 * r
+        back = 0.6 * r
+        apex = f"{cx:.1f},{cy - r:.1f}"
+        base_y = f"{cy + back:.1f}"
+        left = f"{cx - half_base:.1f},{base_y}"
+        right = f"{cx + half_base:.1f},{base_y}"
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
+            f"<defs><radialGradient id='navArrow' cx='50%' cy='35%' r='70%'>"
+            f"<stop offset='0%' stop-color='#e6ffcc' stop-opacity='0.7'/>"
+            f"<stop offset='55%' stop-color='{color}' stop-opacity='0.4'/>"
+            f"<stop offset='100%' stop-color='{color}' stop-opacity='0.15'/>"
+            f"</radialGradient></defs>"
+            f'<g transform="rotate({rel_deg:.1f} {cx:.1f} {cy:.1f})">'
+            f'<polygon points="{apex} {left} {right}" fill="url(#navArrow)" '
+            f"stroke='{color}' stroke-opacity='0.7' stroke-width='1.5'/>"
+            f"</g></svg>"
         )
 
     @staticmethod
