@@ -605,6 +605,7 @@ class QueryBuilderWindow(tk.Toplevel):
                     widget.load_leaf(widget.get_predicate())
 
     def _run(self) -> None:
+        self._clean_results()
         predicate = build(self._current_state())
         if predicate is None:
             messagebox.showwarning(
@@ -635,7 +636,6 @@ class QueryBuilderWindow(tk.Toplevel):
         self._status.config(text="0 result(s)")
 
     def _show_results(self, spots: list[SurfaceSpot]) -> None:
-        self._clean_results()
         for spot in spots:
             parts = [p for p in (spot.star_system, spot.body_name) if p]
             notes = spot.notes or "-"
@@ -656,7 +656,7 @@ class QueryBuilderWindow(tk.Toplevel):
                 tk.END,
                 values=(
                     " ".join(parts) if parts else "—",  # full_name (visible)
-                    spot.mineral_type or "—",  # mineral
+                    (spot.mineral_type or "—").capitalize(),  # mineral
                     display_notes,
                     self._format_visit_time(spot.last_visit_time),  # visit
                     round(spot.latitude, 4),  # lat

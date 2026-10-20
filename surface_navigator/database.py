@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
+from .migrations import run_migrations
 from .models import RingScanStatus, StarSystem, SurfaceSpot
 from .player_location import PlayerLocation, SurfacePoint
 from .predicates import Predicate, QueryContext, StarNotFoundError
@@ -71,7 +72,12 @@ class DatabaseManager:
         # The star we are currently in, from the POSITION_UPDATED stream. Used by
         # ``add_spot`` to stamp ``last_visit_time`` only for a genuine visit.
         self._current_system: str | None = None
-        self._init_db()
+
+        # Creates the tables for a fresh install or upgrades an existing one to
+        # the current schema -- both handled by the versioned migration chain in
+        # ``migrations`` (single source of truth for the schema).
+        run_migrations(self.db_path)
+
         # Safe to subscribe here: the data layer already imports ``dispatcher``
         # to emit signals. Keeping the current star in the DB means ``add_spot``
         # never has to be handed position context by its callers.
@@ -124,59 +130,6 @@ class DatabaseManager:
         if self._current_system is not None and self._current_system == star_system:
             return self._now_utc()
         return None
-
-    def _init_db(self):
-        with self._get_connection() as conn:
-            # Normalized star systems. Names are unique in practice, but a few
-            # systems share a name and are only distinguished by ``systemid``;
-            # hence there is no UNIQUE constraint. ``systemid`` and x/y/z are
-            # optional because they may arrive later via streaming updates.
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS star_systems (
-                    star_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    star_name TEXT NOT NULL UNIQUE,
-                    x REAL,
-                    y REAL,
-                    z REAL,
-                    systemid INTEGER
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS surface_spots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    star_id INTEGER NOT NULL
-                        REFERENCES star_systems(star_id)
-                        ON DELETE CASCADE,
-                    body_name TEXT NOT NULL,
-                    latitude REAL NOT NULL,
-                    longitude REAL NOT NULL,
-                    spot_number INTEGER,
-                    mineral_type TEXT,
-                    mineral_original TEXT,
-                    amount REAL,
-                    density REAL,
-                    max_miners INTEGER DEFAULT 1,
-                    last_visit_time TIMESTAMP,
-                    notes TEXT,
-                    flags INTEGER NOT NULL DEFAULT 0
-                )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_spots_location ON surface_spots (star_id, body_name)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_spots_coords ON surface_spots (latitude, longitude)"
-            )
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_incomplete_mining_spots 
-                ON surface_spots (latitude, longitude) 
-                WHERE mineral_type IS NULL AND mineral_original IS NULL
-            """)
-            conn.execute("""
-               CREATE INDEX IF NOT EXISTS idx_incomplete_mining_spots_system  
-               ON surface_spots (star_id, body_name, latitude, longitude)  
-               WHERE mineral_type IS NULL AND mineral_original IS NULL;
-            """)
 
     def _get_or_create_star(
         self, star_name: str | StarSystem, systemid: int | None = None

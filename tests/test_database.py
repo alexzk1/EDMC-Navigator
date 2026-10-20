@@ -12,6 +12,8 @@ import datetime
 import math
 import os
 import pathlib
+import re
+import sqlite3
 import tempfile
 import time
 from unittest.mock import patch
@@ -20,6 +22,7 @@ import pytest
 
 from surface_navigator.database import DatabaseManager, resolve_db_path
 from surface_navigator.events_dispatcher import EventParams
+from surface_navigator.migrations import run_migrations
 from surface_navigator.models import RingScanStatus, StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.predicates import (
@@ -1131,3 +1134,216 @@ def test_resolve_db_path_new_install_uses_app_dir():
         with patch.object(config_stub, "app_dir_path", new=pathlib.Path(app_dir)):
             result = resolve_db_path(plugin_dir)
         assert result == os.path.join(app_dir, "surface_navigator.db")
+
+
+# ---- case-insensitive text matching (COLLATE NOCASE) ---------------------
+
+
+def test_case_insensitive_star_dedup(db: DatabaseManager):
+    """The reported bug: a search body that differs from the stored name only
+    in case must resolve to the *same* star, not a fresh online duplicate."""
+    db.add_spot(_spot("Blooe Ploe GD-Z c1-0", "B 5 A Ring", 0.0, 0.0, "tritium"))
+    # A lowercase lookup of the very same system must not create a second star.
+    same = db._get_or_create_star("blooe ploe gd-z c1-0")  # type: ignore
+    dup = db._get_or_create_star("BLOOE PLOE GD-Z C1-0")  # type: ignore
+    assert same == dup
+    count = (
+        db._get_connection()  # type: ignore
+        .execute(
+            "SELECT COUNT(*) FROM star_systems "
+            "WHERE lower(star_name) = 'blooe ploe gd-z c1-0'"
+        )
+        .fetchone()[0]
+    )
+    assert count == 1
+
+
+def test_case_insensitive_on_body(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "Aurelia", 10.0, 20.0, "iron"))
+    found = db.query_spots(OnBody("aurelia"), QueryContext(), system="Alpha")
+    assert [sp.body_name for sp in found] == ["Aurelia"]
+
+
+def test_case_insensitive_mineral(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b1", 10.0, 20.0, "Iron"))
+    found = db.query_spots(MineralIs("iron"), QueryContext(), system="Alpha")
+    assert [sp.body_name for sp in found] == ["b1"]
+
+
+def test_columns_use_nocase_collation(db: DatabaseManager):
+    """The searchable text columns must carry COLLATE NOCASE so ``=`` matching
+    ignores case; notes included even though nothing searches it yet."""
+    conn = db._get_connection()  # type: ignore
+    star_ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'star_systems'"
+    ).fetchone()[0]
+    spot_ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'surface_spots'"
+    ).fetchone()[0]
+    for ddl in (star_ddl, spot_ddl):
+        assert "COLLATE NOCASE" in ddl
+    assert "star_name" in star_ddl
+    for col in ("body_name", "mineral_type", "mineral_original", "notes"):
+        # A column is NOCASE only if its fragment carries the collation.
+        assert re.search(r"\b" + col + r"\b[^\n,]*COLLATE NOCASE", spot_ddl)
+
+
+# ---- migration (versioned schema) ----------------------------------------
+
+
+def _write_pre_v1_db(db_path: str) -> None:
+    """A pre-migration database: BINARY-collated columns, user_version 0, and a
+    case-variant star dup whose losing row holds a spot (to exercise repointing)."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE star_systems (
+            star_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            star_name TEXT NOT NULL UNIQUE,
+            x REAL, y REAL, z REAL, systemid INTEGER
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE surface_spots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            star_id INTEGER NOT NULL REFERENCES star_systems(star_id),
+            body_name TEXT NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            spot_number INTEGER,
+            mineral_type TEXT,
+            mineral_original TEXT,
+            amount REAL,
+            density REAL,
+            max_miners INTEGER DEFAULT 1,
+            last_visit_time TIMESTAMP,
+            notes TEXT,
+            flags INTEGER NOT NULL DEFAULT 0
+        )"""
+    )
+    cur = conn.execute("INSERT INTO star_systems (star_name) VALUES ('Sol')")
+    survivor = cur.lastrowid
+    conn.execute("INSERT INTO star_systems (star_name) VALUES ('sol')")  # dup, loser
+    loser = cur.lastrowid
+    # A spot on the losing dup, plus a normal spot on the survivor.
+    conn.execute(
+        "INSERT INTO surface_spots (star_id, body_name, latitude, longitude) "
+        "VALUES (?, 'loser-ring', 0.0, 0.0)",
+        (loser,),
+    )
+    conn.execute(
+        "INSERT INTO surface_spots (star_id, body_name, latitude, longitude) "
+        "VALUES (?, 'winner-body', 1.0, 1.0)",
+        (survivor,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_migration_merges_case_dup_and_repoints_spots(db_path: str):
+    _write_pre_v1_db(db_path)
+    # Opening the manager runs the migration.
+    db = DatabaseManager(db_path)
+
+    # Exactly one star remains, and it is the survivor (lowest id = first
+    # inserted, capital-S "Sol").
+    rows = db._get_connection().execute(  # type: ignore
+        "SELECT star_id, star_name FROM star_systems"
+    ).fetchall()
+    assert len(rows) == 1
+    assert (rows[0][0], rows[0][1]) == (1, "Sol")
+
+    # The spot that referenced the loser now points at the survivor.
+    spots = db.get_system_spots(rows[0][1])
+    assert {sp.body_name for sp in spots} == {"winner-body", "loser-ring"}
+
+    # user_version advanced past 0.
+    assert (
+        db._get_connection().execute("PRAGMA user_version").fetchone()[0] == 1
+    )
+
+
+def test_migration_is_idempotent(db_path: str):
+    _write_pre_v1_db(db_path)
+    DatabaseManager(db_path)
+    first = DatabaseManager(db_path)  # second open runs no migration
+    # Re-running must not rebuild tables or lose data.
+    count = (
+        first._get_connection()  # type: ignore
+        .execute("SELECT COUNT(*) FROM star_systems")
+        .fetchone()[0]
+    )
+    assert count >= 1
+
+
+def test_migration_without_dupes_still_upgrades(db_path: str):
+    """A perfectly normal pre-v1 DB (no case dupes) still gains NOCASE columns."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE star_systems (
+            star_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            star_name TEXT NOT NULL UNIQUE,
+            x REAL, y REAL, z REAL, systemid INTEGER
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE surface_spots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            star_id INTEGER NOT NULL REFERENCES star_systems(star_id),
+            body_name TEXT NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            spot_number INTEGER,
+            mineral_type TEXT,
+            mineral_original TEXT,
+            amount REAL,
+            density REAL,
+            max_miners INTEGER DEFAULT 1,
+            last_visit_time TIMESTAMP,
+            notes TEXT,
+            flags INTEGER NOT NULL DEFAULT 0
+        )"""
+    )
+    sid = conn.execute("INSERT INTO star_systems (star_name) VALUES ('Alpha')").lastrowid
+    conn.execute(
+        "INSERT INTO surface_spots (star_id, body_name, latitude, longitude) "
+        "VALUES (?, 'b1', 0.0, 0.0)",
+        (sid,),
+    )
+    conn.commit()
+    conn.close()
+
+    db = DatabaseManager(db_path)
+    spot_ddl = db._get_connection().execute(  # type: ignore
+        "SELECT sql FROM sqlite_master WHERE name = 'surface_spots'"
+    ).fetchone()[0]
+    assert "COLLATE NOCASE" in spot_ddl
+
+
+def test_migration_rolls_back_on_failure(monkeypatch, db_path):
+    """A migration that fails partway must revert everything: the failing
+    CREATE TABLE must not persist and ``user_version`` must stay 0. This pins
+    the requirement that the whole migration runs in one transaction."""
+
+    def boom(conn):
+        conn.execute("CREATE TABLE should_not_persist (a)")
+        raise sqlite3.OperationalError("boom")
+
+    monkeypatch.setattr(
+        "surface_navigator.migrations.MIGRATIONS",
+        [(1, "boom", boom)],
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        run_migrations(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        names = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert names == set()
+    finally:
+        conn.close()

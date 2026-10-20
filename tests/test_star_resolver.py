@@ -12,13 +12,12 @@ One test (``test_get_json_parses_remote_body``) spins up a local
 import http.server
 import json
 import threading
-from unittest.mock import patch
 from typing import Any
+from unittest.mock import patch
 
 from surface_navigator.database import DatabaseManager
 from surface_navigator.models import SurfaceSpotFlags
 from surface_navigator.star_resolver import StarApiClient, StarDataResolver
-
 
 # ---- fakes -----------------------------------------------------------------
 
@@ -163,7 +162,7 @@ def test_resolver_reads_bodies_under_system(db: DatabaseManager):
 def test_resolver_reads_bodies_at_top_level_fallback(db: DatabaseManager):
     """Older Spansh mirrors put ``bodies`` at the top level; the resolver must
     still find them (fall back to ``dump["bodies"]``)."""
-    legacy_dump = {
+    legacy_dump: dict[str, Any] = {
         "bodies": [
             {
                 "name": "Kepler-442 b",
@@ -240,7 +239,9 @@ def test_edsm_system_url_percent_encodes_system_name() -> None:
     """Spaces and punctuation in the system name are percent-encoded."""
     with patch.object(StarApiClient, "fetch_system", return_value={"id": 7}):
         url = StarApiClient().edsm_system_url("LHS 1434 (G 108-71)", timeout=1)
-    assert url == "https://www.edsm.net/en/system/id/7/name/LHS%201434%20%28G%20108-71%29"
+    assert (
+        url == "https://www.edsm.net/en/system/id/7/name/LHS%201434%20%28G%20108-71%29"
+    )
 
 
 def test_edsm_system_url_returns_none_when_system_unknown() -> None:
@@ -258,7 +259,7 @@ def test_get_json_parses_remote_body() -> None:
     payload = json.dumps({"hello": "world"}).encode("utf-8")
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 (http.server API)
+        def do_GET(self) -> None:  # (http.server API)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -284,7 +285,7 @@ def test_get_json_returns_empty_on_non_json_body() -> None:
     """A non-JSON body (e.g. an EDSM error page) yields ``{}``, never raises."""
 
     class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
@@ -298,6 +299,34 @@ def test_get_json_returns_empty_on_non_json_body() -> None:
     thread.start()
     try:
         url = f"http://127.0.0.1:{server.server_address[1]}/"
+        result = StarApiClient._get_json(url)  # type: ignore[method-access]
+    finally:
+        server.shutdown()
+        thread.join()
+
+    assert result == {}
+
+
+def test_get_json_returns_empty_on_null_body() -> None:
+    """A ``null`` body (EDSM's "no such system" response) is valid JSON that
+    parses to ``None`` -- it must normalise to ``{}``, not leak through and
+    crash ``system_data.get(...)`` downstream."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"null")
+
+        def log_message(self, *args) -> None:  # type: ignore
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/?systemName=Nowhere"
         result = StarApiClient._get_json(url)  # type: ignore[method-access]
     finally:
         server.shutdown()

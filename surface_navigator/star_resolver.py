@@ -31,7 +31,7 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from .nav_config import STAR_API_TIMEOUT_SEC
 
@@ -50,12 +50,13 @@ class StarClient(Protocol):
     def fetch_system(self, system_name: str, timeout: int = ...) -> dict[str, Any]: ...
     def fetch_dump(self, system_id64: int, timeout: int = ...) -> dict[str, Any]: ...
 
+
 EDSM_SYSTEM_URL = "https://www.edsm.net/api-v1/system"
 EDSM_BODIES_URL = "https://www.edsm.net/api-system-v1/bodies"
 EDSM_SYSTEM_PAGE_URL = "https://www.edsm.net/en/system"
 SPANSH_DUMP_URL = "https://www.spansh.co.uk/api/dump/{id64}"
 
-# Signal key that marks a tritium (He3) ring in the Spansh dump.
+# Signal key that marks a tritium (H3) ring in the Spansh dump.
 _TRITIUM_SIGNAL = "Tritium"
 
 
@@ -89,10 +90,19 @@ class StarApiClient:
         if not raw:
             return {}
         try:
-            return json.loads(raw)
+            # ``json.loads`` returns ``Any``; the contract is a dict, so annotate
+            # it as such. The cast is compile-only -- ``null`` still parses to
+            # ``None`` at runtime, which the guard below rejects.
+            parsed: dict[str, Any] | None = cast(dict[str, Any], json.loads(raw))
         except json.JSONDecodeError:
             logger.debug("StarApiClient non-JSON response from %s", url)
             return {}
+        # A ``null`` body (EDSM says "no such system") parses to ``None``, and
+        # any non-object body would break callers that expect a dict. Normalize
+        # them to ``{}`` so "no data" and "unreachable" stay uniform.
+        if not isinstance(parsed, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+            return {}
+        return parsed
 
     def fetch_system(
         self, system_name: str, timeout: int = STAR_API_TIMEOUT_SEC
@@ -232,8 +242,8 @@ class StarDataResolver:
         # (``{"system": {"bodies": [...]}}``). Older mirrors sometimes put
         # ``bodies`` at the top level, so fall back to that -- but a missing
         # list must never be read as "the system has no bodies".
-        system_data = dump.get("system") or {}
-        bodies = system_data.get("bodies") or dump.get("bodies") or []
+        system_data: dict[str, Any] = dump.get("system") or {}
+        bodies: Any = system_data.get("bodies") or dump.get("bodies") or []
 
         system = StarSystem(star_name=system_name, systemid=system_id64)
         for body in bodies:  # type: ignore[list-item]
@@ -247,9 +257,7 @@ class StarDataResolver:
                 # Spansh prefixes every ring with its parent system
                 # ("Blaa Eork OH-U d3-1 4 A Ring"); in-game SAASignalsFound
                 # names do not, so strip the prefix to keep names consistent.
-                ring_name = NavigationUtils.clean_body_name(
-                    system_name, raw_ring_name
-                )
+                ring_name = NavigationUtils.clean_body_name(system_name, raw_ring_name)  # pyright: ignore[reportUnknownArgumentType]
                 # ``name_from_log`` keeps the exact string from the dump;
                 # ``fuzzy_matched_name`` is the canonical lowercased commodity
                 # name (the DB compares against "tritium").
