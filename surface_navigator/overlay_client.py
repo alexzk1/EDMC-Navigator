@@ -388,7 +388,7 @@ class OverlayClient:
         uppercase to match the approach / departure badges. The pump is drawn
         from primitives, so the shape itself is what carries the meaning.
         """
-        badge_width = 240
+        badge_width = 250
         badge_height = 44
         cx, cy, disc_r = 40, 22, 18
         # The pump is drawn inside the disc; every x is relative to the badge.
