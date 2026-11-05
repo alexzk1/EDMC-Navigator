@@ -46,6 +46,13 @@ class OverlayClient:
     # and it should be short enough to avoid annoyance.
     TEXT_TIMEOUT_SEC: int = OVERLAY_TEXT_TIMEOUT_SEC
     MESSAGE_ID = CONFIG_MESSAGE_ID
+    # Message id suffix for the tritium detection badge (namespaced like the
+    # other overlay messages, so it replaces/replaces cleanly).
+    TRITIUM_SUFFIX = "tritium"
+    # Fuel-pump glyph (U+26FD) -- the same marker the main table uses for
+    # tritium rings. Only used in the plain-text fallback; the SVG draws its
+    # own pump shape instead.
+    TRITIUM_EMOJI = "\u26fd"
     # Extrapolation only kicks in once real positions stop arriving. Keeping the
     # threshold below the game's ~2s Status cadence keeps the display fresh
     # between updates without spamming redundant projected positions.
@@ -138,6 +145,42 @@ class OverlayClient:
                 OverlayClient.MESSAGE_ID + "svg",
                 "Approaching" if is_going_on else "Leaving",
                 "#00FF88" if is_going_on else "#FF3344",
+                self._config.left,
+                self._config.top,
+                OverlayClient.TEXT_TIMEOUT_SEC,
+                self._config.size,
+            )
+
+    def show_tritium_detected(self) -> None:
+        """Shows the short-lived "Tritium detected" badge on the overlay.
+
+        Called from the *scan* path (``SAASignalsFound``) once a tritium ring is
+        confirmed -- not from the resolver, which only fetches rings from the
+        internet and never prompts the pilot, so there is nothing to
+        celebrate there. The badge uses the same standard popup position as the
+        approach / departure labels (``_visualize_navigation_switch``).
+
+        Modern overlays get a purpose-built SVG: a purple pill with a fuel-pump
+        icon (the same symbol the table uses for rings, standing in for the
+        ``⛽`` emoji) and the caption. Older overlays fall back to plain text
+        carrying the emoji.
+        """
+        if self._overlay is None:
+            return
+
+        if self.supports_svg():
+            self._overlay.send_svg(
+                OverlayClient.MESSAGE_ID + OverlayClient.TRITIUM_SUFFIX,
+                OverlayClient._tritium_svg(),
+                self._config.left,
+                self._config.top,
+                OverlayClient.TEXT_TIMEOUT_SEC,
+            )
+        else:
+            self._overlay.send_message(
+                OverlayClient.MESSAGE_ID + OverlayClient.TRITIUM_SUFFIX,
+                f"{OverlayClient.TRITIUM_EMOJI} Tritium detected",
+                self._config.color_tritium,
                 self._config.left,
                 self._config.top,
                 OverlayClient.TEXT_TIMEOUT_SEC,
@@ -333,6 +376,49 @@ class OverlayClient:
             self._config.arrow_x,
             self._config.arrow_y,
             OverlayClient.TEXT_TIMEOUT_SEC,
+        )
+
+    @staticmethod
+    def _tritium_svg() -> str:
+        """SVG badge for the "Tritium detected" popup.
+
+        A purple pill with a fuel-pump icon sitting on a gradient disc -- the
+        same symbol the main table uses for tritium rings (``render_note``), so
+        it reads as "fuel" without embedding the ``⛽`` glyph. The caption is
+        uppercase to match the approach / departure badges. The pump is drawn
+        from primitives, so the shape itself is what carries the meaning.
+        """
+        badge_width = 240
+        badge_height = 44
+        cx, cy, disc_r = 40, 22, 18
+        # The pump is drawn inside the disc; every x is relative to the badge.
+        body_x, body_w, body_h = cx - 6, 12, 20
+        screen_x = cx - 3
+        cap_x = screen_x
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{badge_width}" height="{badge_height}">'
+            "<defs>"
+            "<radialGradient id='tritiumDisc' cx='50%' cy='35%' r='70%'>"
+            "<stop offset='0%' stop-color='#e0b3ff' stop-opacity='0.95'/>"
+            "<stop offset='100%' stop-color='#b14dff' stop-opacity='0.95'/>"
+            "</radialGradient></defs>"
+            f'<rect x="0" y="0" width="{badge_width}" height="{badge_height}" rx="12" fill="rgba(20,8,24,0.86)" stroke="#b14dff" stroke-width="1.5"/>'
+            f'<circle cx="{cx}" cy="{cy}" r="{disc_r}" fill="url(#tritiumDisc)"/>'
+            # Fuel pump body.
+            f'<rect x="{body_x}" y="13" width="{body_w}" height="{body_h}" rx="2.5" fill="#ffffff"/>'
+            # Dark screen on the body (a cut-out reading, in the disc color).
+            f'<rect x="{screen_x}" y="17" width="6" height="6" rx="1" fill="#b14dff"/>'
+            # Cap on top of the pump.
+            f'<rect x="{cap_x}" y="9" width="6" height="4" rx="1.5" fill="#ffffff"/>'
+            # Nozzle barrel pointing left off the body.
+            '<rect x="25" y="17" width="9" height="3" rx="1" fill="#ffffff"/>'
+            # Nozzle grip under the barrel.
+            '<rect x="27" y="20" width="3" height="6" rx="1" fill="#ffffff"/>'
+            # Hose linking the nozzle back to the body -- the feature that makes
+            # the glyph read as a *pump* and not just a box.
+            '<path d="M28 26 C 22 31, 30 34, 36 30" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"/>'
+            f'<text x="70" y="28" font-weight="bold" font-family="Arial, sans-serif" font-size="15" fill="#ffffff" letter-spacing="0.5">TRITIUM DETECTED</text>'
+            "</svg>"
         )
 
     @staticmethod

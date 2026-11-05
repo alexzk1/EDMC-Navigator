@@ -371,6 +371,10 @@ class SurfaceNavigatorPlugin:
                 )
             )
             if added:
+                # A scan confirmed a tritium ring -> celebrate it on the
+                # overlay. Rings only fetched from the internet (StarDataResolver)
+                # never reach this code path, so they stay silent.
+                self._overlay.show_tritium_detected()
                 break
 
     def _handle_ring_visit(self, entry: Mapping[str, Any]) -> None:

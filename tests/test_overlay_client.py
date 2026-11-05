@@ -14,6 +14,7 @@ surface coordinate, so this method must:
 import math
 
 from surface_navigator.events_dispatcher import EventParams
+from surface_navigator.nav_config import OverlayTextConf
 from surface_navigator.overlay_client import OverlayClient
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.velocity_extrapolator import VelocityExtrapolator
@@ -129,3 +130,82 @@ def test_smoothing_takes_shortest_way_across_359_1():
     expected = (350.0 + ((10.0 - 350.0 + 180.0) % 360.0 - 180.0) * factor) % 360.0
     assert abs(result - expected) < 1e-6
     assert result < 20.0  # landed near 10, proving the short path
+
+
+class _FakeOverlay:
+    """Records what ``show_tritium_detected`` would send to the binary overlay."""
+
+    def __init__(self, svg_supported: bool = True):
+        self.svg_calls: list[tuple] = []
+        self.message_calls: list[tuple] = []
+        self._svg_supported = svg_supported
+
+    def is_svg_supported(self) -> bool:
+        return self._svg_supported
+
+    def is_multiline_supported(self) -> bool:
+        return False
+
+    def send_svg(self, msg_id, svg, left, top, ttl):
+        self.svg_calls.append((msg_id, svg, left, top, ttl))
+
+    def send_message(self, msg_id, text, color, left, top, ttl, size):
+        self.message_calls.append((msg_id, text, color, left, top, ttl, size))
+
+
+def _client_with_overlay(svg_supported: bool):
+    client = OverlayClient.__new__(OverlayClient)
+    client._overlay = _FakeOverlay(svg_supported)  # pyright: ignore[reportPrivateUsage]
+    client._config = OverlayTextConf()  # pyright: ignore[reportPrivateUsage]
+    client._has_svg = False  # pyright: ignore[reportPrivateUsage]
+    return client
+
+
+def test_show_tritium_detected_noop_without_overlay():
+    """No overlay connection -> a silent no-op (never raises)."""
+    client = OverlayClient.__new__(OverlayClient)
+    client._overlay = None  # pyright: ignore[reportPrivateUsage]
+    client._config = OverlayTextConf()  # pyright: ignore[reportPrivateUsage]
+    client.show_tritium_detected()  # must not raise
+
+
+def test_show_tritium_detected_sends_svg_when_supported():
+    client = _client_with_overlay(svg_supported=True)
+    client.show_tritium_detected()
+
+    assert len(client._overlay.svg_calls) == 1  # pyright: ignore[reportPrivateUsage]
+    msg_id, svg, left, top, ttl = client._overlay.svg_calls[0]  # pyright: ignore[reportPrivateUsage]
+    assert msg_id == OverlayClient.MESSAGE_ID + OverlayClient.TRITIUM_SUFFIX
+    assert "TRITIUM DETECTED" in svg
+    # Same standard popup position / timeout as the approach/departure badge.
+    assert left == client._config.left
+    assert top == client._config.top
+    assert ttl == OverlayClient.TEXT_TIMEOUT_SEC
+    # The pump shape carries the meaning; no emoji glyph is embedded.
+    assert "\u26fd" not in svg
+
+
+def test_show_tritium_detected_falls_back_to_emoji_text():
+    client = _client_with_overlay(svg_supported=False)
+    client.show_tritium_detected()
+
+    assert len(client._overlay.message_calls) == 1  # pyright: ignore[reportPrivateUsage]
+    msg_id, text, color, left, top, _ttl, _size = (
+        client._overlay.message_calls[0]  # pyright: ignore[reportPrivateUsage]
+    )
+    assert msg_id == OverlayClient.MESSAGE_ID + OverlayClient.TRITIUM_SUFFIX
+    assert text.startswith(OverlayClient.TRITIUM_EMOJI)
+    assert "Tritium detected" in text
+    assert color == client._config.color_tritium
+    assert left == client._config.left
+    assert top == client._config.top
+
+
+def test_tritium_svg_is_a_pill_with_disc_and_pump():
+    svg = OverlayClient._tritium_svg()  # pyright: ignore[reportPrivateUsage]
+    assert '<svg' in svg and "</svg>" in svg
+    # Purple pill container + gradient disc for the pump.
+    assert "stroke=\"#b14dff\"" in svg
+    assert "url(#tritiumDisc)" in svg
+    # White pump body + cap + nozzle barrel are all present.
+    assert svg.count('fill="#ffffff"') >= 4

@@ -27,6 +27,9 @@ class OverlayTextConf:
     top: int = 320
     color: str = "#62FF00"
     color_reached: str = "#FF0000"
+    # Tritium detection badge: a purple (between the nav green and the reached
+    # red), chosen to stand out without clashing with either.
+    color_tritium: str = "#B14DFF"
     size: str = "normal"
     # Direction arrow: top-left corner of its square + side length in pixels.
     # The arrow is inscribed in that square. Defaults are tentative -- tune in-game.

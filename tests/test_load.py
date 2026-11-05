@@ -123,3 +123,67 @@ def test_update_last_system_carrier_jump_same_system_keeps_known_xyz():
     assert plugin.last_system.x == 1.0
     assert plugin.last_system.y == 2.0
     assert plugin.last_system.z == 3.0
+
+
+# ---- _handle_ring_scan -----------------------------------------------------
+
+
+class _FakeDB:
+    """Only "records" (appends) when the signal is tritium, mirroring the real
+    ``ensure_tritium_recorded`` which writes nothing for a non-tritium signal."""
+
+    def __init__(self, tritium: bool):
+        self.tritium = tritium
+        self.recorded: list = []
+
+    def ensure_tritium_recorded(self, status):
+        if not self.tritium:
+            return False
+        self.recorded.append(status)
+        return True
+
+
+class _FakeOverlay:
+    def __init__(self):
+        self.calls = 0
+
+    def show_tritium_detected(self):
+        self.calls += 1
+
+
+def test_ring_scan_triggers_overlay_on_tritium(monkeypatch):
+    """A confirmed tritium ring from SAASignalsFound fires the overlay badge."""
+    plugin = _plugin()
+    plugin.db_manager = _FakeDB(tritium=True)
+    plugin._overlay = _FakeOverlay()  # pyright: ignore[reportPrivateUsage]
+    plugin.last_system = StarSystem(star_name="Sol")
+
+    monkeypatch.setattr(
+        "surface_navigator.load.Commodities.resolve_db_value",
+        lambda raw: "tritium" if str(raw).lower() == "tritium" else None,
+    )
+
+    plugin._handle_ring_scan(
+        {"BodyName": "Aurelia", "Signals": [{"Type": "Tritium"}]}
+    )
+    assert plugin._overlay.calls == 1  # pyright: ignore[reportPrivateUsage]
+    assert len(plugin.db_manager.recorded) == 1
+
+
+def test_ring_scan_silent_when_signal_is_not_tritium(monkeypatch):
+    """A non-tritium signal records nothing and never shows the overlay."""
+    plugin = _plugin()
+    plugin.db_manager = _FakeDB(tritium=False)
+    plugin._overlay = _FakeOverlay()  # pyright: ignore[reportPrivateUsage]
+    plugin.last_system = StarSystem(star_name="Sol")
+
+    monkeypatch.setattr(
+        "surface_navigator.load.Commodities.resolve_db_value",
+        lambda raw: "iron" if str(raw).lower() == "iron" else None,
+    )
+
+    plugin._handle_ring_scan(
+        {"BodyName": "Aurelia", "Signals": [{"Type": "Iron"}]}
+    )
+    assert plugin._overlay.calls == 0  # pyright: ignore[reportPrivateUsage]
+    assert plugin.db_manager.recorded == []
