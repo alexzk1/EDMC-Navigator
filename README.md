@@ -23,6 +23,10 @@ the in-game overlay, guides you back to them while you are on the ground.
 - **In-game navigation.** Select a spot and press *Navigate To*. The overlay
   shows bearing and distance while you fly, and announces "Target Reached!"
   when you are close.
+- **Enter coordinates by hand.** The navigation field accepts two bare numbers
+  (latitude, then longitude) separated by any character that is not part of a
+  number — for example `6 -7`, `1.5,2.5`, or `3.0;4.0`. Press *Navigate* to go
+  straight to that point without a saved mark.
 - **Galactic coordinates.** The current system's `x/y/z` and `systemid` are
   captured from journal events and written to the database.
 - **Deduplication.** Scans inside the same area collapse into a single mark, so a
