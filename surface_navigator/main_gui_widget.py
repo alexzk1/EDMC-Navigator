@@ -317,7 +317,11 @@ class MainGUIWidget(ttk.Frame):
 
     def _parse_navigation_field(self) -> SurfacePoint | None:
         """Parse the manual coordinate field, or ``None`` when empty/invalid."""
-        return CoordinateFormatter.parse(self._coord_entry.get())
+        ret = CoordinateFormatter.parse(self._coord_entry.get())
+        if ret is not None:
+            self._coord_entry.delete(0, tk.END)
+            self._coord_entry.insert(0, CoordinateFormatter.to_string(ret))
+        return ret
 
     def _selected_point(self, item: str | None) -> SurfacePoint | None:
         """The full-precision coordinate of a selected row, or ``None``."""

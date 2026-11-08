@@ -21,6 +21,7 @@ the notes on :meth:`parse` for the planned ordering ("most complex" first).
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Callable
 
 from .player_location import SurfacePoint
@@ -67,8 +68,8 @@ class CoordinateFormatter:
         navigation on a failed parse).
 
         Strategies run in the order below, first match wins. The dict literal is
-        the only one implemented now; Stage 3 appends the compact numeric
-        formats ("most complex" first).
+        tried first (it is the most specific); the bare two-float formats are
+        tried last.
         """
         if not text:
             return None
@@ -94,6 +95,41 @@ def _parse_dict_literal(text: str) -> SurfacePoint | None:
         return None
 
 
+# A single coordinate value: an optional sign, digits, and an optional
+# fractional part (``6``, ``-7``, ``+3.5``, ``1.25``). The sign is always read
+# as part of the number -- never as a separator -- which is exactly what keeps
+# ``6 -7`` (lat 6, lon -7) distinct from the ambiguous ``6-7``.
+_FLOAT = r"[+-]?\d+(?:\.\d+)?"
+# Two floats separated by exactly one run of characters that cannot belong to a
+# float (a digit, ``+``, ``-`` or ``.``). Because the separator class excludes
+# the sign, ``-`` can never double as a separator, so ``6-7`` matches nothing
+# instead of guessing whether it means ``6``/``7`` or ``6``/``-7``. ``fullmatch``
+# also rejects a third number (``6 7 8``) or a stray trailing character.
+_TWO_FLOATS_RE = re.compile(rf"({_FLOAT})([^0-9+.-]+)({_FLOAT})")
+
+
+def _parse_two_floats(text: str) -> SurfacePoint | None:
+    """Two bare floats in any non-float-separated layout, e.g. ``6 -7``,
+    ``1.5,2.5``, ``3<4``, ``6  7`` (double space) or ``3.0;4.0``. The first is
+    ``lat``, the second ``lon``.
+
+    The separator is *anything that is not part of a float*, so a lone sign
+    never counts as one: the ambiguous ``6-7`` (and ``6- 7``) fail rather than
+    guess, while ``6 -7`` parses cleanly as lat 6, lon -7.
+    """
+    match = _TWO_FLOATS_RE.fullmatch(text)
+    if match is None:
+        return None
+    lat, lon = match.group(1), match.group(3)
+    try:
+        return SurfacePoint(float(lat), float(lon))
+    except ValueError:  # pragma: no cover - the regex already guarantees digits.
+        return None
+
+
 # Ordered list of parse strategies. New formats are appended here (most complex
 # first) - see :meth:`CoordinateFormatter.parse`.
-_STRATEGIES: list[Callable[[str], SurfacePoint | None]] = [_parse_dict_literal]
+_STRATEGIES: list[Callable[[str], SurfacePoint | None]] = [
+    _parse_dict_literal,
+    _parse_two_floats,
+]
