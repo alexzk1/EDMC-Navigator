@@ -138,6 +138,7 @@ class _FakeOverlay:
     def __init__(self, svg_supported: bool = True):
         self.svg_calls: list[tuple] = []
         self.message_calls: list[tuple] = []
+        self.raw_calls: list[tuple] = []
         self._svg_supported = svg_supported
 
     def is_svg_supported(self) -> bool:
@@ -151,6 +152,9 @@ class _FakeOverlay:
 
     def send_message(self, msg_id, text, color, left, top, ttl, size):
         self.message_calls.append((msg_id, text, color, left, top, ttl, size))
+
+    def send_raw(self, msg):
+        self.raw_calls.append(msg)
 
 
 def _client_with_overlay(svg_supported: bool):
@@ -209,3 +213,56 @@ def test_tritium_svg_is_a_pill_with_disc_and_pump():
     assert "url(#tritiumDisc)" in svg
     # White pump body + cap + nozzle barrel are all present.
     assert svg.count('fill="#ffffff"') >= 4
+
+
+def _navigating_client():
+    """An OverlayClient that is actively navigating: a destination is set, a live
+    overlay is connected, and a surface location with a heading is available."""
+    client = OverlayClient.__new__(OverlayClient)
+    client._overlay = _FakeOverlay()  # pyright: ignore[reportPrivateUsage]
+    client._config = OverlayTextConf()  # pyright: ignore[reportPrivateUsage]
+    client._has_svg = False  # pyright: ignore[reportPrivateUsage]
+    client._has_multiline = False  # pyright: ignore[reportPrivateUsage]
+    client._destination = SurfacePoint(100.0, 100.0)  # pyright: ignore[reportPrivateUsage]
+    client._location = PlayerLocation(  # pyright: ignore[reportPrivateUsage]
+        star_system=None,
+        body_name="Aurelia",
+        player_coord=SurfacePoint(0.0, 0.0),
+        radius_meters=1000.0,
+        heading_deg=90.0,
+    )
+    client._extrapolator = VelocityExtrapolator()  # pyright: ignore[reportPrivateUsage]
+    client._last_real_ts = 0.0  # pyright: ignore[reportPrivateUsage]
+    client._arrow_rel = None  # pyright: ignore[reportPrivateUsage]
+    client._timer_id = None  # pyright: ignore[reportPrivateUsage]
+    client.ttl = OverlayClient.TEXT_TIMEOUT_SEC  # pyright: ignore[reportPrivateUsage]
+    return client
+
+
+def test_navigate_to_none_clears_active_navigation_with_ttl_zero():
+    """Canceling active navigation must clear the overlay immediately: the last
+    known update is repeated with ttl=0 (same MESSAGE_ID), which the C++ overlay
+    treats as 'drop this id now' rather than waiting out the 10s timeout."""
+    client = _navigating_client()
+
+    client.navigate_to(None)  # pyright: ignore[reportPrivateUsage]
+
+    assert client._destination is None  # pyright: ignore[reportPrivateUsage]
+    # The cancel re-sent the last navigation update with ttl=0 ...
+    assert client._overlay.message_calls  # ... something was actually sent
+    assert all(ttl == 0 for _, _, _, _, _, ttl, _ in client._overlay.message_calls)
+    # ... and the direction arrow is cleared with ttl=0 too.
+    assert all(call[-1] == 0 for call in client._overlay.raw_calls)
+
+
+def test_navigate_to_none_without_active_navigation_sends_nothing():
+    """Nothing is being navigated -> nothing to clear -> no overlay traffic and
+    no ttl=0 spam (the reset path must not fire when not navigating)."""
+    client = _navigating_client()
+    client._destination = None  # pyright: ignore[reportPrivateUsage]
+
+    client.navigate_to(None)  # pyright: ignore[reportPrivateUsage]
+
+    assert client._overlay.message_calls == []
+    assert client._overlay.svg_calls == []
+    assert client._overlay.raw_calls == []

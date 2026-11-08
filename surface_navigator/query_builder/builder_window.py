@@ -26,6 +26,7 @@ from tkinter import font as _tk_font
 from tkinter import messagebox, ttk
 from typing import Any
 
+from ..coordinate import CoordinateFormatter
 from ..database import DatabaseManager, StarNotFoundError
 from ..events_dispatcher import EventParams, KnownEvents, dispatcher
 from ..icons_cache import IconsCache
@@ -59,25 +60,20 @@ _LEFT_LEFT_PAD_PX = 5
 logger = logging.getLogger("SurfaceNavigator")
 
 
-def navigation_target(
-    system: str, body: str, lat: str, lon: str
-) -> PlayerLocation | None:
-    """Assemble a navigation target from a results row's four fields.
+def navigation_target(system: str, body: str, point: SurfacePoint) -> PlayerLocation | None:
+    """Assemble a navigation target from a results row's star, body and point.
 
-    Navigation needs all four: the destination star, the body, and the surface
-    coordinates on it. A missing name or unparseable coordinate yields ``None``
-    so the caller simply does not offer navigation for that row.
+    Navigation needs all three: the destination star, the body, and the surface
+    coordinate on it. A missing name yields ``None`` so the caller simply does
+    not offer navigation for that row. ``point`` is already full-precision (the
+    row stores it in a hidden column), so navigation is exact.
     """
-    if not system or not body or not lat or not lon:
-        return None
-    try:
-        player_coord = SurfacePoint(float(lat), float(lon))
-    except (ValueError, TypeError):
+    if not system or not body:
         return None
     return PlayerLocation(
         star_system=StarSystem(star_name=system),
         body_name=body,
-        player_coord=player_coord,
+        player_coord=point,
     )
 
 
@@ -409,6 +405,8 @@ class QueryBuilderWindow(tk.Toplevel):
             "rigs",
             "spot_number",
             "flags",
+            "_lat",
+            "_lon",
         )
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
@@ -429,8 +427,13 @@ class QueryBuilderWindow(tk.Toplevel):
             "lat": 70,
             "lon": 70,
         }
+        # ``_lat`` / ``_lon`` are *hidden full-precision* copies of the rounded
+        # ``lat`` / ``lon`` shown above. The context menu copies and navigates
+        # from these so a pasted coordinate is exact, while the visible columns
+        # stay narrow (see ``CoordinateFormatter.DB_PRECISION``).
+        hidden = ("system", "body", "rigs", "spot_number", "flags", "_lat", "_lon")
         for col in columns:
-            if col in ("system", "body", "rigs", "spot_number", "flags"):
+            if col in hidden:
                 # Hidden, but kept: the context menu reads these by name.
                 self._result_tree.column(col, width=0, stretch=False)
                 self._result_tree.heading(col, text="")
@@ -659,13 +662,15 @@ class QueryBuilderWindow(tk.Toplevel):
                     (spot.mineral_type or "—").capitalize(),  # mineral
                     display_notes,
                     self._format_visit_time(spot.last_visit_time),  # visit
-                    round(spot.latitude, 4),  # lat
-                    round(spot.longitude, 4),  # lon
+                    round(spot.latitude, 4),  # lat (visible, rounded)
+                    round(spot.longitude, 4),  # lon (visible, rounded)
                     spot.star_system or "",  # system (hidden)
                     spot.body_name or "",  # body (hidden)
                     spot.max_miners,  # rigs (hidden)
                     spot.spot_number or "",  # spot_number (hidden)
                     spot.flags.value,  # flags (hidden)
+                    spot.latitude,  # _lat (hidden, full precision)
+                    spot.longitude,  # _lon (hidden, full precision)
                 ),
             )
         self._status.config(text=f"{len(spots)} result(s)")
@@ -685,20 +690,19 @@ class QueryBuilderWindow(tk.Toplevel):
         flags: int,
         system: str,
         body: str,
-        lat: str,
-        lon: str,
+        point: SurfacePoint,
         navigate: Callable[[PlayerLocation], None] | None,
     ) -> PlayerLocation | None:
         """Navigation target for a results row, or ``None`` if we can't navigate.
 
         A Tritium Ring is a spot in space, not a surface point -- no surface
         navigation target for it. Otherwise defer to :func:`navigation_target`,
-        which already rejects rows missing any of the four fields.
+        which already rejects rows missing either the system or the body.
         """
         spot_flags = SurfaceSpotFlags(flags)
         if navigate is None or spot_flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT:
             return None
-        return navigation_target(system, body, lat, lon)
+        return navigation_target(system, body, point)
 
     # -- results context menu ---------------------------------------------
     def _on_context_menu(self, event: Any) -> None:
@@ -722,17 +726,22 @@ class QueryBuilderWindow(tk.Toplevel):
         system = self._result_tree.set(item, "system")
         if not system or system in ("", "—"):
             return
+        # ``_lat`` / ``_lon`` are the hidden full-precision copies; the menu
+        # copies and navigates from these so a pasted coordinate is exact.
+        try:
+            point = SurfacePoint(
+                float(self._result_tree.set(item, "_lat")),
+                float(self._result_tree.set(item, "_lon")),
+            )
+        except (KeyError, ValueError, TypeError):
+            return
         full_name = self._result_tree.set(item, "full_name")
-        location = self._format_location(
-            self._result_tree.set(item, "lat"),
-            self._result_tree.set(item, "lon"),
-        )
+        location = self._format_location(point)
         target = self._navigable_target(
             int(self._result_tree.set(item, "flags")),
-            self._result_tree.set(item, "system"),
+            system,
             self._result_tree.set(item, "body"),
-            self._result_tree.set(item, "lat"),
-            self._result_tree.set(item, "lon"),
+            point,
             self._navigate,
         )
         menu = self._build_context_menu(full_name, location, system, target=target)
@@ -776,15 +785,15 @@ class QueryBuilderWindow(tk.Toplevel):
         return menu
 
     @staticmethod
-    def _format_location(lat: str, lon: str) -> str:
+    def _format_location(point: SurfacePoint) -> str:
         """Coordinates as a dict literal: ``{"lat": 0.5, "lon": 1.2}``.
 
         The same text is both a valid Python dict literal and valid JSON, so it
         pastes cleanly into scripts (``ast.literal_eval`` / ``json.loads``) and
-        web tools alike. ``lat``/``lon`` are the rounded values shown in the
-        table, so the copy always matches what the player sees.
+        web tools alike. The full-precision ``point`` is used (not the rounded
+        values shown in the table) so the copy navigates exactly.
         """
-        return f'{{"lat": {lat}, "lon": {lon}}}'
+        return CoordinateFormatter.to_string(point)
 
     def _copy(self, text: str) -> None:
         """Copy ``text`` to the clipboard."""

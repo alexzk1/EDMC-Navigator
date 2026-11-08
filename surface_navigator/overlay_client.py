@@ -85,6 +85,7 @@ class OverlayClient:
 
         self._has_svg = False
         self._has_svg = self.supports_svg()
+        self.ttl: int = OverlayClient.TEXT_TIMEOUT_SEC
 
         if edmcoverlay:
             try:
@@ -254,7 +255,7 @@ class OverlayClient:
                     self._config.color_reached,
                     self._config.left,
                     self._config.top,
-                    OverlayClient.TEXT_TIMEOUT_SEC,
+                    self.ttl,
                     self._config.size,
                 )
                 return
@@ -271,7 +272,7 @@ class OverlayClient:
                 self._config.color,
                 self._config.left,
                 self._config.top,
-                OverlayClient.TEXT_TIMEOUT_SEC,
+                self.ttl,
                 self._config.size,
             )
             return
@@ -282,7 +283,7 @@ class OverlayClient:
             self._config.color,
             self._config.left,
             self._config.top,
-            OverlayClient.TEXT_TIMEOUT_SEC,
+            self.ttl,
             self._config.size,
         )
         self._overlay.send_message(
@@ -291,7 +292,7 @@ class OverlayClient:
             self._config.color,
             self._config.left + 5,
             self._config.top + 20,
-            OverlayClient.TEXT_TIMEOUT_SEC,
+            self.ttl,
             self._config.size,
         )
         self._overlay.send_message(
@@ -301,7 +302,7 @@ class OverlayClient:
             self._config.color,
             self._config.left + 5,
             self._config.top + 40,  # Estimated vertical size of the 1st line.
-            OverlayClient.TEXT_TIMEOUT_SEC,
+            self.ttl,
             self._config.size,
         )
 
@@ -359,7 +360,7 @@ class OverlayClient:
                 "shape": "vect",
                 "vector": OverlayClient._arrow_points(cx, cy, r, rel),
                 "color": self._config.color,
-                "ttl": OverlayClient.TEXT_TIMEOUT_SEC,
+                "ttl": self.ttl,
             }
         )
 
@@ -375,7 +376,7 @@ class OverlayClient:
             OverlayClient._arrow_svg(size, rel, self._config.color),
             self._config.arrow_x,
             self._config.arrow_y,
-            OverlayClient.TEXT_TIMEOUT_SEC,
+            self.ttl,
         )
 
     @staticmethod
@@ -475,8 +476,14 @@ class OverlayClient:
         return self._destination is not None and self.is_available()
 
     def navigate_to(self, point: SurfacePoint | None):
-        self._destination = None
+        self.ttl: int = OverlayClient.TEXT_TIMEOUT_SEC
         self._stop_timer()
+
+        if point is None and self.is_navigating():
+            self.ttl = 0
+            self._update_navigation()
+        self._destination = None
+
         # Drop the smoothed angle so the next target starts with no lag.
         self._arrow_rel = None
         if point is None or not self.is_available():

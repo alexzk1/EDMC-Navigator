@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from surface_navigator.database import DatabaseManager, resolve_db_path
-from surface_navigator.events_dispatcher import EventParams
+from surface_navigator.events_dispatcher import EventParams, KnownEvents, dispatcher
 from surface_navigator.migrations import run_migrations
 from surface_navigator.models import RingScanStatus, StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
@@ -356,6 +356,91 @@ def test_closeness_selects_nearest_of_candidates(db: DatabaseManager):
     assert result.latitude == near.latitude
 
 
+def test_find_any_spot_near_finds_existing(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b4", 10.0, 20.0, "gold"))
+    result = db.find_any_spot_near(
+        "Alpha", "b4", SurfacePoint(10.0, 20.0), 5000.0, 1_000_000.0
+    )
+    assert result is not None
+    assert result.latitude == 10.0
+    assert result.longitude == 20.0
+
+
+def test_find_any_spot_near_none_when_far(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b4", 10.0, 20.0, "gold"))
+    # A point far away (well beyond the radius) matches nothing.
+    result = db.find_any_spot_near(
+        "Alpha", "b4", SurfacePoint(11.0, 21.0), 5000.0, 1_000_000.0
+    )
+    assert result is None
+
+
+def test_find_any_spot_near_none_when_absent(db: DatabaseManager):
+    assert db.find_any_spot_near("Alpha", "b4", SurfacePoint(0.0, 0.0), 5000.0, 1_000_000.0) is None
+
+
+def test_create_manual_navigation_mark_is_temporary_with_note(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b4", 10.0, 20.0))
+    # Stamp the current star so ``add_spot`` records a genuine visit.
+    dispatcher.dispatch(
+        KnownEvents.POSITION_UPDATED,
+        EventParams(system=StarSystem(star_name="Alpha")),
+    )
+    ok = db.create_manual_navigation_mark(
+        "Alpha", "b4", SurfacePoint(10.5, 20.5), "manually navigated at 14:30:05"
+    )
+    assert ok is True
+    spots = db.get_system_spots("Alpha")
+    mark = next(s for s in spots if s.latitude == 10.5 and s.longitude == 20.5)
+    assert SurfaceSpotFlags.IS_TEMPORARY_MARK in mark.flags
+    assert mark.notes == "manually navigated at 14:30:05"
+    # A real navigation is in the current star, so last_visit is stamped (so the
+    # mark is ageable by gc_temporaries rather than left NULL).
+    assert mark.last_visit_time is not None
+
+
+def test_create_manual_navigation_mark_swept_by_gc(db: DatabaseManager):
+    db.add_spot(_spot("Alpha", "b4", 10.0, 20.0))
+    db.create_manual_navigation_mark(
+        "Alpha", "b4", SurfacePoint(10.5, 20.5), "manually navigated at 14:30:05"
+    )
+    # Backdate the mark's timestamp so it is older than the 1-hour cutoff.
+    star_id = db._get_or_create_star("Alpha")  # type: ignore
+    old = (
+        datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017
+        - datetime.timedelta(hours=2)
+    ).isoformat()
+    with db._get_connection() as conn:  # type: ignore
+        conn.execute(
+            "UPDATE surface_spots SET last_visit_time = ? "
+            "WHERE star_id = ? AND latitude = ? AND longitude = ?",
+            (old, star_id, 10.5, 20.5),
+        )
+    deleted = db.gc_temporaries(age_secs=3600)
+    assert deleted == 1
+    remaining = db.get_system_spots("Alpha")
+    assert all(s.latitude != 10.5 or s.longitude != 20.5 for s in remaining)
+
+
+def test_create_manual_navigation_mark_null_when_system_unknown(db: DatabaseManager):
+    """The restart scenario: no position event has arrived yet, so
+    ``_current_system`` is None and ``add_spot`` cannot stamp a visit. The mark
+    is created with a NULL timestamp -- but the next GC must still sweep it."""
+    # No POSITION_UPDATED dispatched -> current system is unknown.
+    ok = db.create_manual_navigation_mark(
+        "Alpha", "b4", SurfacePoint(10.5, 20.5), "manually navigated at 00:20:00"
+    )
+    assert ok is True
+    spots = db.get_system_spots("Alpha")
+    mark = next(s for s in spots if s.latitude == 10.5 and s.longitude == 20.5)
+    assert mark.last_visit_time is None  # orphaned, as in the real bug
+
+    # A later GC pass (age-gated) must remove the orphan, not leave it immortal.
+    deleted = db.gc_temporaries(age_secs=3600)
+    assert deleted == 1
+    assert db.get_system_spots("Alpha") == []
+
+
 def test_update_spot(db: DatabaseManager):
     db.add_spot(_spot("Alpha", "b4", 10.0, 20.0))
     spot = db.get_system_spots("Alpha")[0]
@@ -407,7 +492,11 @@ def test_gc_temporaries_deletes_only_old_marks(db: DatabaseManager):
     assert SurfaceSpotFlags.IS_TEMPORARY_MARK in temp_survivor.flags
 
 
-def test_gc_temporaries_keeps_null_timestamps(db: DatabaseManager):
+def test_gc_temporaries_deletes_null_timestamps(db: DatabaseManager):
+    """A NULL ``last_visit_time`` means the mark was created while the current
+    star was unknown (e.g. right after a restart) -- an orphan that can never
+    age out on its own. It must be swept on any GC pass, age-gated or not, or it
+    becomes an immortal record."""
     star_id = db._get_or_create_star("GcNull")  # type: ignore
     with db._get_connection() as conn:  # type: ignore
         conn.execute(
@@ -416,9 +505,26 @@ def test_gc_temporaries_keeps_null_timestamps(db: DatabaseManager):
             "VALUES (?, ?, ?, ?, ?, NULL)",
             (star_id, "temp_null", 0.0, 0.0, SurfaceSpotFlags.IS_TEMPORARY_MARK.value),
         )
+    # Age-gated pass still sweeps the orphan.
     deleted = db.gc_temporaries(age_secs=1)
-    assert deleted == 0
-    assert len(db.get_system_spots("GcNull")) == 1
+    assert deleted == 1
+    assert db.get_system_spots("GcNull") == []
+
+
+def test_gc_temporaries_delete_all_fresh_mark(db: DatabaseManager):
+    """``age_secs <= 0`` means "delete everything". A mark stamped *now* (the
+    same second as the query) must still be removed -- a strict ``< now`` in
+    seconds would leave it behind once ``datetime()`` truncates microseconds.
+    This is exactly the manually navigated mark the GUI just created."""
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()  # noqa: UP017
+    _insert_raw(db, "Gc", "fresh_temp", SurfaceSpotFlags.IS_TEMPORARY_MARK.value, now_iso)
+    # A non-temporary mark stamped at the same time must be left untouched.
+    _insert_raw(db, "Gc", "fresh_normal", 0, now_iso)
+
+    deleted = db.gc_temporaries(age_secs=0)
+    assert deleted == 1
+    bodies = {sp.body_name for sp in db.get_system_spots("Gc")}
+    assert bodies == {"fresh_normal"}
 
 
 def test_update_visit_time_advances(db: DatabaseManager):

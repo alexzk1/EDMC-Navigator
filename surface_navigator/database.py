@@ -294,6 +294,96 @@ class DatabaseManager:
                 return None
             return spots[0]
 
+    def find_any_spot_near(
+        self,
+        star: str | StarSystem,
+        body: str,
+        center: SurfacePoint,
+        radius_meters: float,
+        planet_radius_meters: float,
+    ) -> SurfaceSpot | None:
+        """Returns the nearest spot within ``radius_meters`` of ``center`` on
+        ``body``, or ``None`` when none is that close.
+
+        This reuses the exact flat-earth distance of
+        :meth:`find_incomplete_surface_mining_spot` but drops the "unmined"
+        filter -- it matches any spot regardless of mineral. It is what lets a
+        manually navigated point be recognised as an existing bookmark (so we do
+        not double-record it).
+        """
+        if isinstance(star, StarSystem):
+            star_name_to_use = star.star_name
+        else:
+            star_name_to_use = star
+        if not star_name_to_use or not body:
+            return None
+
+        lat_rad = math.radians(center.latitude)
+        cos_lat = math.cos(lat_rad)
+        cos_lat_sq = cos_lat * cos_lat
+        deg_ratio = (radius_meters / planet_radius_meters) * (180 / math.pi)
+        deg_radius_sq = deg_ratio**2
+
+        sql = f"""  
+            SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM}
+            WHERE star_systems.star_name = ? AND body_name = ?
+                AND (      
+                    (latitude - ?) * (latitude - ?) +   
+                    (longitude - ?) * (longitude - ?) * ?
+                ) < ?      
+                ORDER BY (      
+                    (latitude - ?) * (latitude - ?) +    
+                    (longitude - ?) * (longitude - ?) * ?    
+                ) ASC  
+            LIMIT 1
+        """
+        params = (
+            star_name_to_use,
+            body,
+            center.latitude,  # WHERE lat1
+            center.latitude,  # WHERE lat2
+            center.longitude,  # WHERE lon1
+            center.longitude,  # WHERE lon2
+            cos_lat_sq,  # WHERE cos_sq
+            deg_radius_sq,  # WHERE R^2
+            center.latitude,  # ORDER BY lat1
+            center.latitude,  # ORDER BY lat2
+            center.longitude,  # ORDER BY lon1
+            center.longitude,  # ORDER BY lon2
+            cos_lat_sq,  # ORDER BY cos_sq
+        )
+        with self._get_connection() as conn:
+            cursor = conn.execute(sql, params)
+            spots = self._fetch_select_cursor(cursor)
+            return spots[0] if spots else None
+
+    def create_manual_navigation_mark(
+        self,
+        star: str | StarSystem,
+        body: str,
+        point: SurfacePoint,
+        note: str,
+    ) -> bool:
+        """Creates a temporary mark at ``point`` for a manual navigation.
+
+        The mark carries ``IS_TEMPORARY_MARK`` so ``gc_temporaries(3600)`` (the
+        "clear temporaries older than an hour" action) sweeps it after roughly an
+        hour; ``note`` records when it was created (e.g. "manually navigated at
+        14:30:05"). ``last_visit_time`` is stamped ``now`` only when we are
+        actually in ``star`` (see ``add_spot``), which is always the case for a
+        navigation we just performed.
+        """
+        star_name = star.star_name if isinstance(star, StarSystem) else star
+        spot = SurfaceSpot(
+            star_system=star_name,
+            body_name=body,
+            latitude=point.latitude,
+            longitude=point.longitude,
+            notes=note,
+            flags=SurfaceSpotFlags.IS_TEMPORARY_MARK,
+        )
+        return self.add_spot(spot)
+
     def update_visit_time(
         self,
         star: str | StarSystem,
@@ -628,28 +718,52 @@ class DatabaseManager:
 
         A spot is "temporary" when the ``IS_TEMPORARY_MARK`` bit is set in its
         ``flags``. Age is measured from ``last_visit_time`` against now (UTC).
-        Rows with a NULL ``last_visit_time`` are kept -- their age is unknown.
+
+        A NULL ``last_visit_time`` is treated as "infinitely old": such a mark
+        was created while the current star was unknown (e.g. right after a
+        restart, before the first position event -- see ``_visit_timestamp_for``),
+        so it is an orphan that can never age out on its own. Leaving it behind
+        would make it an immortal record, so every GC pass -- age-gated or the
+        "delete everything" one -- sweeps NULL timestamps too.
+
+        ``age_secs <= 0`` is the "delete everything" sentinel (the "Clear all
+        temporaries" button): it removes *every* temporary mark with a known
+        timestamp, not just ones strictly older than "now". That last part
+        matters because a freshly created mark shares the current second with
+        the query, and ``datetime()`` truncates to whole seconds -- a strict
+        ``< now`` would otherwise leave a mark created in the same second
+        behind.
 
         Returns the number of deleted rows.
         """
         import datetime
 
-        cutoff = (
-            datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017
-            - datetime.timedelta(seconds=age_secs)
-        ).strftime("%Y-%m-%d %H:%M:%S")
-
         try:
             with self._get_connection() as conn:
-                cursor = conn.execute(
-                    """
-                    DELETE FROM surface_spots
-                    WHERE (flags & ?) != 0
-                      AND last_visit_time IS NOT NULL
-                      AND datetime(last_visit_time) < ?
-                    """,
-                    (SurfaceSpotFlags.IS_TEMPORARY_MARK.value, cutoff),
-                )
+                if age_secs <= 0:
+                    cursor = conn.execute(
+                        """
+                        DELETE FROM surface_spots
+                        WHERE (flags & ?) != 0
+                        """,
+                        (SurfaceSpotFlags.IS_TEMPORARY_MARK.value,),
+                    )
+                else:
+                    cutoff = (
+                        datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017
+                        - datetime.timedelta(seconds=age_secs)
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+                    cursor = conn.execute(
+                        """
+                        DELETE FROM surface_spots
+                        WHERE (flags & ?) != 0
+                          AND (
+                            last_visit_time IS NULL
+                            OR datetime(last_visit_time) < ?
+                          )
+                        """,
+                        (SurfaceSpotFlags.IS_TEMPORARY_MARK.value, cutoff),
+                    )
                 deleted = cursor.rowcount
 
             # Let the transaction to finish!

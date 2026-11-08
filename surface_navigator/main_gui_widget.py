@@ -4,6 +4,7 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 from .add_spot_dialog import AddSpotDialog
+from .coordinate import CoordinateFormatter
 from .database import DatabaseManager
 from .events_dispatcher import EventParams, KnownEvents, dispatcher
 from .models import StarSystem, SurfaceSpot
@@ -13,10 +14,17 @@ from .player_location import (
     NavigationUtils,
     PlayerLocation,
     SurfacePoint,
+    in_game_timestamp,
 )
 from .presets import PresetManager
 from .spot_flags import SurfaceSpotFlags
 from .ui_tooltip import Tooltip
+
+# A manually navigated point is only recorded as a temporary mark when it is not
+# within this many metres of an existing spot -- otherwise walking to a saved
+# bookmark (or pasting your own earlier coordinate) would clutter the DB with a
+# duplicate mark. Reuses the same flat-earth distance as the mining-spot query.
+MANUAL_NAV_DEDUP_METERS = 50.0
 
 
 def render_note(spot: SurfaceSpot) -> str:
@@ -123,6 +131,17 @@ class MainGUIWidget(ttk.Frame):
         )
         self._btn_manage.pack(side=tk.RIGHT, padx=2)
 
+        # Manual coordinate entry -- a full-width cell between the toolbar and
+        # the table. Paste/dict a ``{"lat": ..., "lon": ...}`` string here and
+        # press Navigate; clicking a row overwrites the field with that row's
+        # coordinates. The field is the single source for navigation, so it is
+        # never cleared by position/system events (see ``_on_table_select``).
+        coord_frame = ttk.Frame(main_container)
+        coord_frame.pack(fill=tk.X, pady=(5, 0))
+        ttk.Label(coord_frame, text="Coordinates:").pack(side=tk.LEFT)
+        self._coord_entry = ttk.Entry(coord_frame)
+        self._coord_entry.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
         # Treeview with scrollbar
         tree_container = ttk.Frame(main_container)
         tree_container.pack(fill=tk.BOTH, expand=True)
@@ -166,6 +185,9 @@ class MainGUIWidget(ttk.Frame):
 
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Selecting a row overwrites the manual coordinate field with that row's
+        # coordinates (full precision). See ``_on_table_select``.
+        self._tree.bind("<<TreeviewSelect>>", self._on_table_select)
 
         # Static hover tooltips -- nothing here changes at runtime, so one pass
         # in ``_setup_ui`` covers every control.
@@ -183,7 +205,8 @@ class MainGUIWidget(ttk.Frame):
         )
         Tooltip(
             self._btn_navigate,
-            "Show direction to the selected spot on overlay. Select a row first.",
+            "Navigate to the coordinates in the field above. Click a row to fill "
+            "the field, or paste/dict coordinates and press Navigate.",
         )
         Tooltip(
             self._btn_manage,
@@ -244,37 +267,111 @@ class MainGUIWidget(ttk.Frame):
             )
 
     def _on_navigate(self) -> None:
-        selection = self._tree.selection()
-        if not selection:
-            if self.overlay.is_navigating():
-                # Cancel navigation (is it possible to reset selection though?)
-                self.overlay.navigate_to(None)
-            else:
-                messagebox.showwarning("Warning", "Please select a spot first.")
+        """Navigate to the coordinate in the manual entry field.
+
+        The field is the single source of truth: it is parsed with
+        :class:`CoordinateFormatter` and must yield a valid point, otherwise the
+        click cancels any active navigation (an empty or unparseable field means
+        "go nowhere"). When the point matches the currently selected row it is
+        just navigation to a saved bookmark; otherwise it is a manual navigation
+        and a temporary mark is recorded (unless an existing spot is already
+        within ``MANUAL_NAV_DEDUP_METERS``).
+        """
+        point = self._parse_navigation_field()
+        if point is None:
+            # Empty or unparseable field -> "go nowhere": cancel any active
+            # navigation arrow rather than leaving a stale one on screen.
+            self.overlay.navigate_to(None)
             return
 
+        selection = self._tree.selection()
+        selected = self._selected_point(selection[0]) if selection else None
+        # A plain table click fills the field with the selected row's exact
+        # coordinates, so a match means "navigate to a saved spot".
+        is_saved_spot = selected is not None and selected == point
+
+        if not self._do_navigation(point):
+            return  # overlay error already shown
+
+        if not is_saved_spot:
+            self._maybe_record_manual_navigation(point)
+
+    def _on_table_select(self, _event: Any = None) -> None:
+        """Overwrite the manual field with the selected row's coordinates.
+
+        Full precision is used (see ``CoordinateFormatter.to_string``) so the
+        field navigates exactly. An empty selection leaves the field untouched -
+        a deselection must not erase a manually entered coordinate, and neither
+        does jumping / entering / leaving a body (those never touch the field).
+        """
+        selection = self._tree.selection()
+        if not selection:
+            return
+        point = self._selected_point(selection[0])
+        if point is None:
+            return
+        self._coord_entry.delete(0, tk.END)
+        self._coord_entry.insert(0, CoordinateFormatter.to_string(point))
+        self._coord_entry.selection_range(0, tk.END)
+        self._coord_entry.focus()
+
+    def _parse_navigation_field(self) -> SurfacePoint | None:
+        """Parse the manual coordinate field, or ``None`` when empty/invalid."""
+        return CoordinateFormatter.parse(self._coord_entry.get())
+
+    def _selected_point(self, item: str | None) -> SurfacePoint | None:
+        """The full-precision coordinate of a selected row, or ``None``."""
+        if not item:
+            return None
+        row = dict(zip(self._tree["columns"], self._tree.item(item, "values")))
+        try:
+            return SurfacePoint(float(row["lat"]), float(row["lon"]))
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def _do_navigation(self, point: SurfacePoint) -> bool:
+        """Send ``point`` to the overlay; returns ``True`` if it started.
+
+        Shows the appropriate warning and returns ``False`` when there is no
+        body to navigate on or the overlay is not installed/active.
+        """
         if self.current_location is None:
             self.overlay.navigate_to(None)
             messagebox.showwarning(
                 "Navigation Error",
                 "Cannot navigate to system markers. Please approach a body first.",
             )
+            return False
+        self.overlay.navigate_to(point)
+        if not self.overlay.is_navigating():
+            messagebox.showwarning(
+                "Navigation Error",
+                "Navigation was not started. Most likely overlay is not installed.",
+            )
+            return False
+        return True
+
+    def _maybe_record_manual_navigation(self, point: SurfacePoint) -> None:
+        """Record a manual navigation as a ~1 hour temporary mark.
+
+        Skipped when we have no current body, or when an existing spot is already
+        within ``MANUAL_NAV_DEDUP_METERS`` (a manual navigation onto a bookmark
+        is not a new point to remember). The mark's note stamps the time, e.g.
+        "manually navigated at 14:30:05".
+        """
+        if self.current_location is None:
             return
-
-        columns = self._tree["columns"]
-        values = self._tree.item(selection[0], "values")
-        row_dict = dict(zip(columns, values))
-
-        try:
-            lat = float(row_dict["lat"])
-            lon = float(row_dict["lon"])
-            self.overlay.navigate_to(SurfacePoint(lat, lon))
-            if not self.overlay.is_navigating():
-                raise RuntimeError(
-                    "Navigation was not started. Most likely overlay is not installed."
-                )
-        except (ValueError, IndexError, RuntimeError) as e:
-            messagebox.showwarning("Navigation error", f"{e}")
+        body = self.current_location.body_name
+        system = self.current_location.star_system
+        if not body or system is None:  # type: ignore
+            return
+        radius = self.current_location.radius_meters or DEFAULT_PLANET_RADIUS
+        if self.db_manager.find_any_spot_near(
+            system, body, point, MANUAL_NAV_DEDUP_METERS, radius
+        ):
+            return
+        note = f"manually navigated at {in_game_timestamp('%H:%M:%S')}"
+        self.db_manager.create_manual_navigation_mark(system, body, point, note)
 
     def _navigate_from_builder(self, target: PlayerLocation) -> None:
         """Navigate to a spot the query builder assembled from a results row.

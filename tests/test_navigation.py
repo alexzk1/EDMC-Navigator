@@ -4,7 +4,7 @@ Three pure helpers carry the new logic so neither a full ``Toplevel`` builder
 nor a ``MainGUIWidget`` needs instantiating:
 
 * :func:`navigation_target` assembles a navigation target from a results row's
-  four fields (star, body, lat, lon) -- the four things navigation needs.
+  star, body and surface point -- the three things navigation needs.
 * :func:`is_navigable` checks that target against the current position: we can
   only navigate to a spot we are actually standing on.
 * :meth:`QueryBuilderWindow._navigable_target` gates the target on two things:
@@ -56,8 +56,8 @@ def _current(
 # ---- navigation_target -----------------------------------------------------
 
 
-def test_navigation_target_assembles_all_four_fields():
-    target = navigation_target("Sol", "Earth", "1.5", "-2.5")
+def test_navigation_target_assembles_all_fields():
+    target = navigation_target("Sol", "Earth", SurfacePoint(1.5, -2.5))
     assert target is not None
     assert target.body_name == "Earth"
     assert target.star_system.star_name == "Sol"
@@ -65,23 +65,11 @@ def test_navigation_target_assembles_all_four_fields():
 
 
 def test_navigation_target_rejects_missing_system():
-    assert navigation_target("", "Earth", "1.0", "2.0") is None
+    assert navigation_target("", "Earth", SurfacePoint(1.0, 2.0)) is None
 
 
 def test_navigation_target_rejects_missing_body():
-    assert navigation_target("Sol", "", "1.0", "2.0") is None
-
-
-def test_navigation_target_rejects_missing_lat():
-    assert navigation_target("Sol", "Earth", "", "2.0") is None
-
-
-def test_navigation_target_rejects_missing_lon():
-    assert navigation_target("Sol", "Earth", "1.0", "") is None
-
-
-def test_navigation_target_rejects_unparseable_coordinates():
-    assert navigation_target("Sol", "Earth", "abc", "2.0") is None
+    assert navigation_target("Sol", "", SurfacePoint(1.0, 2.0)) is None
 
 
 # ---- is_navigable ----------------------------------------------------------
@@ -130,7 +118,7 @@ def test_navigable_target_none_when_no_callback():
     # No navigation callback wired -- there is nothing to navigate to.
     assert (
         QueryBuilderWindow._navigable_target(
-            0, "Sol", "Earth", "1.0", "2.0", None
+            0, "Sol", "Earth", SurfacePoint(1.0, 2.0), None
         )
         is None
     )
@@ -139,11 +127,12 @@ def test_navigable_target_none_when_no_callback():
 def test_navigable_target_builds_for_surface_spot():
     # A plain surface spot with a callback wired produces a real target.
     target = QueryBuilderWindow._navigable_target(
-        0, "Sol", "Earth", "1.0", "2.0", _navigate
+        0, "Sol", "Earth", SurfacePoint(1.0, 2.0), _navigate
     )
     assert target is not None
     assert target.star_system.star_name == "Sol"
     assert target.body_name == "Earth"
+    assert target.player_coord == SurfacePoint(1.0, 2.0)
 
 
 def test_navigable_target_none_for_tritium_ring():
@@ -153,20 +142,8 @@ def test_navigable_target_none_for_tritium_ring():
             SurfaceSpotFlags.TRITIUM_RING_PRESENT.value,
             "Sol",
             "Earth",
-            "1.0",
-            "2.0",
+            SurfacePoint(1.0, 2.0),
             _navigate,
-        )
-        is None
-    )
-
-
-def test_navigable_target_still_rejects_missing_fields():
-    # Even with a callback and no ring, a row missing coordinates is not
-    # navigable -- that check lives in navigation_target.
-    assert (
-        QueryBuilderWindow._navigable_target(
-            0, "Sol", "Earth", "", "2.0", _navigate
         )
         is None
     )
