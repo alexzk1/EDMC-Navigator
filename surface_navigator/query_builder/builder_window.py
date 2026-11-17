@@ -764,6 +764,7 @@ class QueryBuilderWindow(tk.Toplevel):
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Copy Name", command=lambda: self._copy(full_name))
         menu.add_command(label="Copy Location", command=lambda: self._copy(location))
+        menu.add_command(label="Copy System Name", command=lambda: self._copy(system))
         menu.add_command(
             label="Visit on EDSM", command=lambda: self._visit_edsm(system)
         )
