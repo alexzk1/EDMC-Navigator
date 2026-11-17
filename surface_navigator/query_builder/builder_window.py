@@ -17,6 +17,7 @@ builder -- so the builder stays a pure selection surface.
 from __future__ import annotations
 
 import datetime
+import functools
 import logging
 import threading
 import tkinter as tk
@@ -77,6 +78,81 @@ def navigation_target(
         body_name=body,
         player_coord=point,
     )
+
+
+# The results-tree columns a user may sort by. ``coords`` is deliberately
+# excluded: it is two numbers squeezed into one informational cell, so sorting
+# by it would be surprising. The distance column is the default sort key.
+SORTABLE_RESULT_COLUMNS: tuple[str, ...] = (
+    "full_name",
+    "distance",
+    "mineral",
+    "note",
+    "visit",
+)
+
+
+def _result_sort_key(column: str) -> Callable[[SurfaceSpot], object]:
+    """Return the raw (direction-agnostic) sort key for one result column."""
+    if column == "full_name":
+        return lambda s: (
+            (s.star_system or "").lower(),
+            (s.body_name or "").lower(),
+        )
+    if column == "distance":
+        return lambda s: s.distance_ly
+    if column == "mineral":
+        return lambda s: (s.mineral_type or "").lower()
+    if column == "note":
+        return lambda s: (s.notes or "").lower()
+    if column == "visit":
+        return lambda s: s.last_visit_time
+    raise ValueError(f"column is not sortable: {column}")
+
+
+def _cmp_ids(a: SurfaceSpot, b: SurfaceSpot) -> int:
+    """Stable ascending tiebreak on the DB id (``None`` sorts last)."""
+    ia, ib = a.id, b.id
+    if ia is None and ib is None:
+        return 0
+    if ia is None:
+        return 1
+    if ib is None:
+        return -1
+    return (ia > ib) - (ia < ib)
+
+
+def _compare_spots(
+    a: SurfaceSpot, b: SurfaceSpot, column: str, reverse: bool
+) -> int:
+    """Compare two spots on ``column`` for an in-tree sort.
+
+    ``None`` values always sort last (both directions); the DB ``id`` breaks
+    ties so the order is stable. ``reverse`` flips the primary comparison only.
+    """
+    ka = _result_sort_key(column)(a)
+    kb = _result_sort_key(column)(b)
+    if ka is None and kb is None:
+        return _cmp_ids(a, b)
+    if ka is None:
+        return 1
+    if kb is None:
+        return -1
+    if ka == kb:
+        return _cmp_ids(a, b)
+    return 1 if (ka < kb) == reverse else -1
+
+
+def sort_results(
+    spots: list[SurfaceSpot], column: str, reverse: bool
+) -> list[SurfaceSpot]:
+    """Return ``spots`` sorted by ``column`` (``id`` as a stable tiebreak).
+
+    Pure and widget-free so it can be unit-tested directly; the UI layer just
+    feeds it the current rows and the active column/direction.
+    """
+    comparator = lambda a, b: _compare_spots(a, b, column, reverse)    # type: ignore
+    return sorted(spots, key=functools.cmp_to_key(comparator)) # type: ignore
 
 
 class QueryBuilderWindow(tk.Toplevel):
@@ -413,6 +489,16 @@ class QueryBuilderWindow(tk.Toplevel):
         self._result_tree = ttk.Treeview(
             parent, columns=columns, show="headings", height=8
         )
+        # Sorting state. ``distance`` is the default sort (then DB id); clicking
+        # a header toggles direction or switches the active column.
+        self._current_spots: list[SurfaceSpot] = []
+        self._sort_column: str = "distance"
+        self._sort_reverse: bool = False
+        # ``identify_column`` returns a column *index* ("#2"), not its name, so
+        # map index -> name to translate a header click into a sortable column.
+        self._column_index: dict[str, str] = {
+            str(i + 1): name for i, name in enumerate(columns)
+        }
         column_headers = {
             "full_name": "System/Body",
             "distance": "Distance (ly)",
@@ -423,12 +509,15 @@ class QueryBuilderWindow(tk.Toplevel):
         }
         column_widths = {
             "full_name": 180,
-            "distance": 70,
+            "distance": 90,
             "mineral": 90,
-            "note": 180,
+            "note": 200,
             "visit": 130,
-            "coords": 100,
+            "coords": 110,
         }
+        # Kept so ``_apply_sort_indicators`` can restore each heading's base text
+        # (without the arrow) after a re-sort.
+        self._result_column_headers = column_headers
         # ``_lat`` / ``_lon`` are *hidden full-precision* copies of the values
         # shown in the ``coords`` column. The context menu copies and navigates
         # from these so a pasted coordinate is exact, while the visible column
@@ -454,6 +543,12 @@ class QueryBuilderWindow(tk.Toplevel):
         # ``_on_context_menu``). Bound here rather than in ``__init__`` so the
         # widget definitely exists.
         self._result_tree.bind("<Button-3>", self._on_context_menu)
+        # Left-click on a heading sorts by that column (see ``_on_header_click``).
+        # Bound here so the widget definitely exists; row selection still works
+        # because the handler only acts on heading clicks.
+        self._result_tree.bind("<Button-1>", self._on_header_click)
+        # Show the active sort marker immediately (default: distance, ascending).
+        self._apply_sort_indicators()
 
     def _build_status(self, parent: tk.Widget) -> None:
         status = ttk.Frame(parent)
@@ -636,48 +731,99 @@ class QueryBuilderWindow(tk.Toplevel):
         self._show_results(spots)
 
     def _clean_results(self):
+        self._rerender([])
+
+    def _rerender(self, spots: list[SurfaceSpot]) -> None:
+        """Clear the tree and re-insert ``spots`` (already sorted by the caller)."""
         for item in self._result_tree.get_children():
             self._result_tree.delete(item)
-        self._status.config(text="0 result(s)")
+        for spot in spots:
+            self._render_row(spot)
+        self._status.config(text=f"{len(spots)} result(s)")
 
     def _show_results(self, spots: list[SurfaceSpot]) -> None:
-        for spot in spots:
-            parts = [p for p in (spot.star_system, spot.body_name) if p]
-            notes = spot.notes or "-"
-            extra_segments: list[str] = []
-            if not (spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT):
-                if spot.spot_number is not None:
-                    extra_segments.append(f"nav_id: {spot.spot_number}")
-                if spot.mineral_type is not None:
-                    extra_segments.append(f"rigs: {spot.max_miners}")
+        """Store the freshly fetched rows and render them, pre-sorted by the
+        default key (distance, then id)."""
+        self._current_spots = spots
+        self._reapply_sort()
 
-            display_notes = notes
-            if extra_segments:
-                meta = ", ".join(extra_segments)
-                display_notes = f"{meta} • {notes}" if notes != "-" else meta
+    def _render_row(self, spot: SurfaceSpot) -> None:
+        """Insert one spot as a single results row."""
+        parts = [p for p in (spot.star_system, spot.body_name) if p]
+        notes = spot.notes or "-"
+        extra_segments: list[str] = []
+        if not (spot.flags & SurfaceSpotFlags.TRITIUM_RING_PRESENT):
+            if spot.spot_number is not None:
+                extra_segments.append(f"nav_id: {spot.spot_number}")
+            if spot.mineral_type is not None:
+                extra_segments.append(f"rigs: {spot.max_miners}")
 
-            self._result_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    " ".join(parts) if parts else "—",  # full_name (visible)
-                    self._format_distance(spot.distance_ly),  # distance (visible)
-                    (spot.mineral_type or "—").capitalize(),  # mineral
-                    display_notes,
-                    self._format_visit_time(spot.last_visit_time),  # visit
-                    self._format_coords(
-                        spot.latitude, spot.longitude
-                    ),  # coords (visible)
-                    spot.star_system or "",  # system (hidden)
-                    spot.body_name or "",  # body (hidden)
-                    spot.max_miners,  # rigs (hidden)
-                    spot.spot_number or "",  # spot_number (hidden)
-                    spot.flags.value,  # flags (hidden)
-                    spot.latitude,  # _lat (hidden, full precision)
-                    spot.longitude,  # _lon (hidden, full precision)
-                ),
-            )
-        self._status.config(text=f"{len(spots)} result(s)")
+        display_notes = notes
+        if extra_segments:
+            meta = ", ".join(extra_segments)
+            display_notes = f"{meta} • {notes}" if notes != "-" else meta
+
+        self._result_tree.insert(
+            "",
+            tk.END,
+            values=(
+                " ".join(parts) if parts else "—",  # full_name (visible)
+                self._format_distance(spot.distance_ly),  # distance (visible)
+                (spot.mineral_type or "—").capitalize(),  # mineral
+                display_notes,
+                self._format_visit_time(spot.last_visit_time),  # visit
+                self._format_coords(
+                    spot.latitude, spot.longitude
+                ),  # coords (visible)
+                spot.star_system or "",  # system (hidden)
+                spot.body_name or "",  # body (hidden)
+                spot.max_miners,  # rigs (hidden)
+                spot.spot_number or "",  # spot_number (hidden)
+                spot.flags.value,  # flags (hidden)
+                spot.latitude,  # _lat (hidden, full precision)
+                spot.longitude,  # _lon (hidden, full precision)
+            ),
+        )
+
+    def _on_header_click(self, event: tk.Event) -> None:
+        """Sort the results by the clicked header; click it again to reverse.
+
+        Only ``SORTABLE_RESULT_COLUMNS`` react -- the hidden columns and the
+        squeezed-in ``coords`` column are ignored. Row selection is untouched
+        because the handler bails out on any non-heading click.
+        """
+        if self._result_tree.identify_region(event.x, event.y) != "heading":
+            return
+        column = self._column_index[self._result_tree.identify_column(event.x)[1:]]
+        if column not in SORTABLE_RESULT_COLUMNS:
+            return
+        if column == self._sort_column:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_column = column
+            self._sort_reverse = False
+        self._reapply_sort()
+
+    def _reapply_sort(self) -> None:
+        """Re-sort the stored rows by the active column/direction and re-render.
+
+        Sorting the underlying :class:`SurfaceSpot` rows (rather than the
+        formatted cell strings) keeps numeric and datetime columns correct.
+        """
+        self._current_spots = sort_results(
+            self._current_spots, self._sort_column, self._sort_reverse
+        )
+        self._rerender(self._current_spots)
+        self._apply_sort_indicators()
+
+    def _apply_sort_indicators(self) -> None:
+        """Mark the active sort column with an up/down arrow in its heading."""
+        for col, original in self._result_column_headers.items():
+            if col == self._sort_column:
+                arrow = " ▲" if not self._sort_reverse else " ▼"
+                self._result_tree.heading(col, text=original + arrow)
+            else:
+                self._result_tree.heading(col, text=original)
 
     @staticmethod
     def _format_visit_time(dt: datetime.datetime | None) -> str:

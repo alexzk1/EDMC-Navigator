@@ -12,6 +12,7 @@ nor a ``MainGUIWidget`` needs instantiating:
   Ring in space.
 """
 
+import datetime
 import tkinter as tk
 
 # ``icons_cache`` builds ``PhotoImage``s at import time, which needs a default
@@ -20,11 +21,13 @@ import tkinter as tk
 _root = tk.Tk()
 
 from surface_navigator.main_gui_widget import is_navigable
-from surface_navigator.models import StarSystem
+from surface_navigator.models import StarSystem, SurfaceSpot
 from surface_navigator.player_location import PlayerLocation, SurfacePoint
 from surface_navigator.query_builder.builder_window import (
+    SORTABLE_RESULT_COLUMNS,
     QueryBuilderWindow,
     navigation_target,
+    sort_results,
 )
 from surface_navigator.spot_flags import SurfaceSpotFlags
 
@@ -172,3 +175,111 @@ def test_format_coords_joins_lat_lon_one_decimal():
     # the hidden ``_lat`` / ``_lon`` columns, so this never feeds navigation.
     assert QueryBuilderWindow._format_coords(12.345, -45.678) == "12.3, -45.7"  # pyright: ignore[reportPrivateUsage]
     assert QueryBuilderWindow._format_coords(0.0, 0.0) == "0.0, 0.0"  # pyright: ignore[reportPrivateUsage]
+
+
+# ---- sort_results ----------------------------------------------------------
+
+
+def _spot(
+    system: str,
+    body: str,
+    *,
+    distance: float | None = 0.0,
+    mineral: str | None = None,
+    notes: str | None = None,
+    visit: str | None = None,
+    id: int = 0,
+) -> SurfaceSpot:
+    return SurfaceSpot(
+        id=id,
+        star_system=system,
+        body_name=body,
+        mineral_type=mineral,
+        notes=notes,
+        distance_ly=distance,
+        last_visit_time=(
+            datetime.datetime.fromisoformat(visit) if visit else None
+        ),
+    )
+
+
+def test_sort_results_distance_ascending_then_id():
+    spots = [
+        _spot("B", "b1", distance=10.0, id=2),
+        _spot("A", "b1", distance=3.0, id=9),
+        _spot("C", "b1", distance=7.0, id=1),
+    ]
+    ordered = sort_results(spots, "distance", reverse=False)
+    assert [s.star_system for s in ordered] == ["A", "C", "B"]
+
+
+def test_sort_results_distance_descending():
+    spots = [
+        _spot("A", "b1", distance=3.0, id=9),
+        _spot("B", "b1", distance=10.0, id=2),
+    ]
+    ordered = sort_results(spots, "distance", reverse=True)
+    assert [s.star_system for s in ordered] == ["B", "A"]
+
+
+def test_sort_results_distance_ties_broken_by_id_ascending():
+    spots = [
+        _spot("same", "b1", distance=5.0, id=7),
+        _spot("same", "b2", distance=5.0, id=3),
+    ]
+    ordered = sort_results(spots, "distance", reverse=False)
+    assert [s.id for s in ordered] == [3, 7]
+
+
+def test_sort_results_none_distance_sorts_last_both_directions():
+    spots = [
+        _spot("zero", "b1", distance=0.0, id=1),
+        _spot("unknown", "b1", distance=None, id=2),
+        _spot("near", "b1", distance=2.0, id=3),
+    ]
+    assert [s.star_system for s in sort_results(spots, "distance", False)] == [
+        "zero",
+        "near",
+        "unknown",
+    ]
+    assert [s.star_system for s in sort_results(spots, "distance", True)] == [
+        "near",
+        "zero",
+        "unknown",
+    ]
+
+
+def test_sort_results_by_name_case_insensitive():
+    spots = [
+        _spot("Rofoo", "b1", id=1),
+        _spot("blooe", "b1", id=2),
+        _spot("Cyaumie", "b1", id=3),
+    ]
+    asc = sort_results(spots, "full_name", False)
+    assert [s.star_system for s in asc] == ["blooe", "Cyaumie", "Rofoo"]
+    desc = sort_results(spots, "full_name", True)
+    assert [s.star_system for s in desc] == ["Rofoo", "Cyaumie", "blooe"]
+
+
+def test_sort_results_by_visit_time():
+    spots = [
+        _spot("late", "b1", visit="3312-11-01T00:00:00", id=1),
+        _spot("early", "b1", visit="3312-10-01T00:00:00", id=2),
+    ]
+    ordered = sort_results(spots, "visit", False)
+    assert [s.star_system for s in ordered] == ["early", "late"]
+
+
+def test_sortable_columns_excludes_coords_and_hidden():
+    # ``coords`` is two numbers in one cell; hidden columns are never user-facing.
+    assert "coords" not in SORTABLE_RESULT_COLUMNS
+    assert "system" not in SORTABLE_RESULT_COLUMNS
+    assert "_lat" not in SORTABLE_RESULT_COLUMNS
+    assert set(SORTABLE_RESULT_COLUMNS) == {
+        "full_name",
+        "distance",
+        "mineral",
+        "note",
+        "visit",
+    }
+
