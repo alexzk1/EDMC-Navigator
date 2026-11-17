@@ -24,6 +24,10 @@ class SurfaceSpot:
     max_miners: int = 1  # Rigs count
     last_visit_time: datetime.datetime | None = None
     notes: str | None = None
+    # Euclidean distance (light-years) from this spot's star to the current
+    # system. Computed by the query engine when the current system's coordinates
+    # are known; ``None`` means "distance unavailable" (current system unknown).
+    distance_ly: float | None = None
     # Bit-field of SurfaceSpotFlags. Stored as INTEGER in the DB; defaults to 0
     # (no flags). ``__post_init__`` normalises the plain int the DB returns into
     # a SurfaceSpotFlags so callers can test membership directly.

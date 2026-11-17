@@ -851,7 +851,24 @@ class DatabaseManager:
             )
 
         where_sql = f"WHERE {' AND '.join(where_parts)} " if where_parts else ""
-        sql = f"SELECT {_SPOTS_SELECT_LIST} {_SPOTS_FROM} {where_sql}ORDER BY surface_spots.id"
+        # When the current system's coordinates are known, compute each result's
+        # distance to it (light-years) as an extra column. The SELECT's ``?``
+        # placeholders bind first, so the six distance params are prepended.
+        select_extra = ""
+        if ctx.current_system_coords is not None:
+            cx, cy, cz = ctx.current_system_coords
+            select_extra = (
+                ", sqrt("
+                "(star_systems.x - ?)*(star_systems.x - ?) +"
+                "(star_systems.y - ?)*(star_systems.y - ?) +"
+                "(star_systems.z - ?)*(star_systems.z - ?)"
+                ") AS distance_ly"
+            )
+            where_params = [cx, cx, cy, cy, cz, cz, *where_params]
+        sql = (
+            f"SELECT {_SPOTS_SELECT_LIST}{select_extra} {_SPOTS_FROM} "
+            f"{where_sql}ORDER BY surface_spots.id"
+        )
         with self._get_connection() as conn:
             return self._fetch_select_cursor(conn.execute(sql, where_params))
 

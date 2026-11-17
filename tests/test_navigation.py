@@ -147,3 +147,28 @@ def test_navigable_target_none_for_tritium_ring():
         )
         is None
     )
+
+
+# ---- _format_distance ------------------------------------------------------
+
+
+def _dist(value: float | None) -> str:
+    return QueryBuilderWindow._format_distance(value)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_format_distance_none_is_em_dash():
+    # No current-system coords -> distance unavailable -> uniform dash.
+    assert _dist(None) == "—"
+
+
+def test_format_distance_rounds_to_two_decimals():
+    assert _dist(3.0) == "3.00"
+    assert _dist(17.320508) == "17.32"
+    assert _dist(0.5) == "0.50"
+
+
+def test_format_coords_joins_lat_lon_one_decimal():
+    # Display-only: 1 decimal each, comma-separated. Full precision is kept in
+    # the hidden ``_lat`` / ``_lon`` columns, so this never feeds navigation.
+    assert QueryBuilderWindow._format_coords(12.345, -45.678) == "12.3, -45.7"  # pyright: ignore[reportPrivateUsage]
+    assert QueryBuilderWindow._format_coords(0.0, 0.0) == "0.0, 0.0"  # pyright: ignore[reportPrivateUsage]

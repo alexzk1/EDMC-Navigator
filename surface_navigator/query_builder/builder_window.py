@@ -60,7 +60,9 @@ _LEFT_LEFT_PAD_PX = 5
 logger = logging.getLogger("SurfaceNavigator")
 
 
-def navigation_target(system: str, body: str, point: SurfacePoint) -> PlayerLocation | None:
+def navigation_target(
+    system: str, body: str, point: SurfacePoint
+) -> PlayerLocation | None:
     """Assemble a navigation target from a results row's star, body and point.
 
     Navigation needs all three: the destination star, the body, and the surface
@@ -95,7 +97,7 @@ class QueryBuilderWindow(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title("Surface Navigator Managing")
-        self.minsize(1024, 768)
+        self.minsize(1224, 768)
 
         self.db_manager = db_manager
         self.preset_manager = preset_manager
@@ -395,11 +397,11 @@ class QueryBuilderWindow(tk.Toplevel):
         # them separately to copy the full name and to build the EDSM link.
         columns = (
             "full_name",
+            "distance",
             "mineral",
             "note",
             "visit",
-            "lat",
-            "lon",
+            "coords",
             "system",
             "body",
             "rigs",
@@ -413,24 +415,24 @@ class QueryBuilderWindow(tk.Toplevel):
         )
         column_headers = {
             "full_name": "System/Body",
+            "distance": "Distance (ly)",
             "mineral": "Mineral",
             "note": "Note",
             "visit": "Visited",
-            "lat": "Lat",
-            "lon": "Lon",
+            "coords": "Coords",
         }
         column_widths = {
             "full_name": 180,
+            "distance": 70,
             "mineral": 90,
-            "note": 200,
-            "visit": 110,
-            "lat": 70,
-            "lon": 70,
+            "note": 180,
+            "visit": 130,
+            "coords": 100,
         }
-        # ``_lat`` / ``_lon`` are *hidden full-precision* copies of the rounded
-        # ``lat`` / ``lon`` shown above. The context menu copies and navigates
-        # from these so a pasted coordinate is exact, while the visible columns
-        # stay narrow (see ``CoordinateFormatter.DB_PRECISION``).
+        # ``_lat`` / ``_lon`` are *hidden full-precision* copies of the values
+        # shown in the ``coords`` column. The context menu copies and navigates
+        # from these so a pasted coordinate is exact, while the visible column
+        # stays narrow (see ``CoordinateFormatter.DB_PRECISION``).
         hidden = ("system", "body", "rigs", "spot_number", "flags", "_lat", "_lon")
         for col in columns:
             if col in hidden:
@@ -659,11 +661,13 @@ class QueryBuilderWindow(tk.Toplevel):
                 tk.END,
                 values=(
                     " ".join(parts) if parts else "—",  # full_name (visible)
+                    self._format_distance(spot.distance_ly),  # distance (visible)
                     (spot.mineral_type or "—").capitalize(),  # mineral
                     display_notes,
                     self._format_visit_time(spot.last_visit_time),  # visit
-                    round(spot.latitude, 4),  # lat (visible, rounded)
-                    round(spot.longitude, 4),  # lon (visible, rounded)
+                    self._format_coords(
+                        spot.latitude, spot.longitude
+                    ),  # coords (visible)
                     spot.star_system or "",  # system (hidden)
                     spot.body_name or "",  # body (hidden)
                     spot.max_miners,  # rigs (hidden)
@@ -684,6 +688,27 @@ class QueryBuilderWindow(tk.Toplevel):
         if dt is None:
             return "—"
         return in_game_timestamp(now=dt)
+
+    @staticmethod
+    def _format_coords(lat: float, lon: float) -> str:
+        """Join lat/lon into one narrow, informational cell (1 decimal each).
+
+        This is display-only -- the full-precision values ride along in the
+        hidden ``_lat`` / ``_lon`` columns so right-click copy stays exact.
+        """
+        return f"{lat:.1f}, {lon:.1f}"
+
+    @staticmethod
+    def _format_distance(dist_ly: float | None) -> str:
+        """Formats the star-to-star distance in light-years.
+
+        ``None`` (current system's coordinates unknown) renders as ``—`` so the
+        column stays uniform; otherwise two decimals is plenty for a jump
+        planner.
+        """
+        if dist_ly is None:
+            return "—"
+        return f"{dist_ly:.2f}"
 
     @staticmethod
     def _navigable_target(

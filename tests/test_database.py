@@ -961,6 +961,28 @@ def test_query_spots_within_light_years_matches_by_distance(db: DatabaseManager)
     assert {sp.star_system for sp in result} == {"Beta"}
 
 
+def test_query_spots_computes_distance_to_current_system(db: DatabaseManager):
+    """When the current system's coordinates are known, each result carries its
+    euclidean distance to it in light-years."""
+    _add_coorded(db, "Close", 0.0, 0.0, 3.0)  # distance = 3 ly
+    _add_coorded(db, "Far", 10.0, 10.0, 10.0)  # sqrt(300) ~ 17.32 ly
+
+    ctx = QueryContext(current_system_coords=(0.0, 0.0, 0.0))
+    by_system = {
+        sp.star_system: sp.distance_ly
+        for sp in db.query_spots(MineralIs("iron"), ctx)
+    }
+    assert by_system["Close"] == pytest.approx(3.0)
+    assert by_system["Far"] == pytest.approx(((10.0**2) * 3) ** 0.5)
+
+
+def test_query_spots_distance_none_when_current_system_unknown(db: DatabaseManager):
+    """With no current-system coordinates, the distance column is left NULL."""
+    _add_coorded(db, "Close", 0.0, 0.0, 3.0)
+    result = db.query_spots(MineralIs("iron"), QueryContext())
+    assert result[0].distance_ly is None
+
+
 def test_query_spots_missing_current_star_raises(db: DatabaseManager):
     """A radius is set but there is no current-system context (game not
     running): the engine must fail loud, not silently match everything."""
